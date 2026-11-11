@@ -1,0 +1,6 @@
+node_modules/
+# 浏览器配置文件里有 Steam 登录 Cookie，绝对不要提交
+.autosw/
+# 具体游戏的内容和配置不放进工具仓库（仓库是公开的）
+apps/
+steam.config.yaml

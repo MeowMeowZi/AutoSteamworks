@@ -1,0 +1,42 @@
+# AutoSteamworks 配置。路径都相对于本文件所在的目录。
+
+browser:
+  channel: msedge          # 直接用系统自带的 Edge；也可以填 chrome
+
+partner:
+  # 商店编辑页地址（已经用真实后台确认过），一般不用改
+  # storeEditUrl: "https://partner.steamgames.com/admin/game/editbyappid/{appid}"
+  delayMs: 1500
+
+# 所有 App 共用的商店配置，每个 App 也可以单独覆盖
+store:
+  # 存成单独 .bbcode 文件的本地化长文本，其余放 <语言>/_fields.yaml（默认值如下）
+  # files: [about, short_description, legal, earlyaccess.*, sections.*.content]
+  ignoreFields: []         # 不想同步的字段 name，支持 * 通配
+
+steamcmd:
+  path: steamcmd           # 不在 PATH 里就写完整路径，例如 C:/steamcmd/steamcmd.exe
+  user: your_build_account
+
+languages: [english, schinese]   # Steam 的语言 API 名
+
+apps:
+  game:
+    appid: 480
+    name: 我的游戏
+    assets:                # 图片目录默认是 apps/<key>/assets
+      # screenshotsAllAges: true   # Steam 要求声明截图是否适合所有年龄
+    build:
+      setLive: beta        # Steam 不允许通过 steamcmd 直接设置 default 分支
+      depots:
+        - id: 481
+          contentRoot: builds/windows
+          exclude: ["*.pdb"]
+
+  # 有 Demo / DLC 时照这个格式加：
+  # demo:
+  #   appid: 0000000
+  #   languages: [english]
+
+  # dlc_soundtrack:
+  #   appid: 482
