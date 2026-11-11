@@ -1,0 +1,220 @@
+// 项目管理：网页上添加的游戏项目列表、新项目初始化、配置的读写（给网页的设置页用）。
+// 配置文件仍然是 steam.config.yaml，网页只是把它做成表单；用 YAML Document 修改，保留注释。
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
+import YAML from 'yaml';
+import { appHome, loadConfig } from './config.js';
+import { STEAM_LANGS } from './local/storeFiles.js';
+
+export const CONFIG_NAME = 'steam.config.yaml';
+const PKG_ROOT = join(import.meta.dirname, '..');
+
+// ---------------- 项目列表 ----------------
+
+export interface ProjectRecord {
+  /** steam.config.yaml 的绝对路径（还没初始化的项目也先记下将来的位置） */
+  config: string;
+  addedAt: string;
+}
+
+const registryPath = () => join(appHome(), 'projects.json');
+
+export function listProjects(): ProjectRecord[] {
+  const p = registryPath();
+  if (!existsSync(p)) return [];
+  try { return JSON.parse(readFileSync(p, 'utf8')).projects ?? []; } catch { return []; }
+}
+
+function saveProjects(list: ProjectRecord[]) {
+  mkdirSync(appHome(), { recursive: true });
+  writeFileSync(registryPath(), JSON.stringify({ projects: list }, null, 2));
+}
+
+/** 接受游戏项目文件夹或者配置文件路径，返回配置文件的绝对路径 */
+export function configPathFor(input: string): string {
+  const p = resolve(input.trim().replace(/^"|"$/g, ''));
+  if (!existsSync(p)) throw new Error(`路径不存在：${p}`);
+  if (statSync(p).isDirectory()) return join(p, CONFIG_NAME);
+  if (/\.ya?ml$/i.test(p)) return p;
+  throw new Error('请选择游戏项目的文件夹（或者其中的 steam.config.yaml）');
+}
+
+export function addProject(input: string): ProjectRecord {
+  const config = configPathFor(input);
+  const list = listProjects();
+  const found = list.find((x) => x.config.toLowerCase() === config.toLowerCase());
+  if (found) return found;
+  const rec = { config, addedAt: new Date().toISOString() };
+  saveProjects([...list, rec]);
+  return rec;
+}
+
+/** 只从列表里移除，不删除任何文件 */
+export function removeProject(config: string) {
+  saveProjects(listProjects().filter((x) => x.config.toLowerCase() !== config.toLowerCase()));
+}
+
+/** 网页请求里带的项目必须在列表里，防止通过接口读写任意路径 */
+export function requireProject(config: string | null | undefined): string {
+  const rec = config && listProjects().find((x) => x.config.toLowerCase() === resolve(config).toLowerCase());
+  if (!rec) throw new Error('未知项目，请先在“项目”页添加');
+  return rec.config;
+}
+
+export function projectSummary(rec: ProjectRecord) {
+  const dir = dirname(rec.config);
+  const exists = existsSync(dir);
+  const configured = existsSync(rec.config);
+  let name = basename(dir), apps: { key: string; name?: string; appid: number }[] = [], error: string | undefined;
+  if (configured) {
+    try {
+      const c = loadConfig(rec.config);
+      apps = c.apps.map((a) => ({ key: a.key, name: a.name, appid: a.appid }));
+      name = apps[0]?.name ?? name;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+  return { config: rec.config, dir, folder: basename(dir), name, exists, configured, apps, error };
+}
+
+// ---------------- 新项目初始化 ----------------
+
+export interface InitOptions {
+  name: string;
+  appid: number;
+  languages: string[];
+  /** App 在配置里的 key，也是 apps/<key>/ 目录名 */
+  key?: string;
+}
+
+const KEY_RE = /^[a-z0-9_-]+$/;
+
+function checkLanguages(langs: unknown): string[] {
+  if (!Array.isArray(langs) || !langs.length) throw new Error('至少选择一种语言');
+  const bad = langs.filter((l) => !STEAM_LANGS.includes(l));
+  if (bad.length) throw new Error(`不认识的语言：${bad.join(', ')}`);
+  return langs as string[];
+}
+
+function checkAppid(v: unknown): number {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n <= 0) throw new Error('appid 必须是正整数（在 Steamworks 后台 App 名称旁边能看到）');
+  return n;
+}
+
+/** 在项目文件夹里生成 steam.config.yaml、STEAM_RULES.md，并把 .autosw/ 加进 .gitignore。返回生成了哪些文件 */
+export function initProject(config: string, o: InitOptions): string[] {
+  if (existsSync(config)) throw new Error(`${config} 已经存在`);
+  const dir = dirname(config);
+  const key = o.key || 'game';
+  if (!KEY_RE.test(key)) throw new Error('App 标识只能用小写字母、数字、- 和 _');
+  if (!o.name?.trim()) throw new Error('请填写游戏名称');
+  const doc = new YAML.Document({
+    browser: { channel: 'msedge' },
+    languages: checkLanguages(o.languages),
+    apps: { [key]: { appid: checkAppid(o.appid), name: o.name.trim() } },
+  });
+  doc.commentBefore = ' AutoSteamworks 配置（可以在网页的“设置”里修改）。路径都相对于本文件所在的目录。';
+  writeFileSync(config, doc.toString({ lineWidth: 0 }));
+  const made = [CONFIG_NAME];
+
+  const rules = join(dir, 'STEAM_RULES.md');
+  if (!existsSync(rules)) { copyFileSync(join(PKG_ROOT, 'templates', 'STEAM_RULES.md'), rules); made.push('STEAM_RULES.md'); }
+  if (ensureGitignore(dir)) made.push('.gitignore（加了 .autosw/）');
+  return made;
+}
+
+/** 快照、上传记录不该进游戏项目的 git。返回是否改了文件 */
+export function ensureGitignore(dir: string): boolean {
+  const gi = join(dir, '.gitignore');
+  const text = existsSync(gi) ? readFileSync(gi, 'utf8') : '';
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
+  if (lines.some((l) => l === '.autosw/' || l === '.autosw' || l === '/.autosw/')) return false;
+  appendFileSync(gi, (text && !text.endsWith('\n') ? '\n' : '') + '# AutoSteamworks 的本地状态\n.autosw/\n');
+  return true;
+}
+
+// ---------------- 设置页：配置的读写 ----------------
+
+export interface AppSettings {
+  key: string;
+  name: string;
+  appid: number;
+  /** 空数组 = 跟随项目的语言 */
+  languages: string[];
+  /** true / false / null（未设置） */
+  screenshotsAllAges: boolean | null;
+}
+
+export interface Settings {
+  languages: string[];
+  browser: string;
+  delayMs: number;
+  ignoreFields: string[];
+  apps: AppSettings[];
+}
+
+export function readSettings(config: string): Settings {
+  const raw = YAML.parse(readFileSync(config, 'utf8')) ?? {};
+  return {
+    languages: raw.languages ?? ['english'],
+    browser: raw.browser?.channel ?? 'msedge',
+    delayMs: raw.partner?.delayMs ?? 1500,
+    ignoreFields: raw.store?.ignoreFields ?? [],
+    apps: Object.entries<any>(raw.apps ?? {}).map(([key, a]) => ({
+      key,
+      name: a?.name ?? '',
+      appid: Number(a?.appid ?? 0),
+      languages: a?.languages ?? [],
+      screenshotsAllAges: a?.assets?.screenshotsAllAges ?? null,
+    })),
+  };
+}
+
+/** 把网页提交的设置写回配置。只改这些项，其他内容（构建配置、注释）原样保留 */
+export function writeSettings(config: string, s: Settings) {
+  const doc = YAML.parseDocument(readFileSync(config, 'utf8'));
+  // deleteIn 在路径不存在时会抛错
+  const del = (path: (string | number)[]) => { if (doc.hasIn(path)) doc.deleteIn(path); };
+  doc.set('languages', checkLanguages(s.languages));
+  if (!['msedge', 'chrome'].includes(s.browser)) throw new Error('浏览器只能是 msedge 或 chrome');
+  doc.setIn(['browser', 'channel'], s.browser);
+  const delay = Number(s.delayMs);
+  if (!Number.isFinite(delay) || delay < 0) throw new Error('请求间隔必须是非负数');
+  doc.setIn(['partner', 'delayMs'], delay);
+  doc.setIn(['store', 'ignoreFields'], (s.ignoreFields ?? []).map((x) => String(x).trim()).filter(Boolean));
+
+  if (!s.apps?.length) throw new Error('至少要有一个 App');
+  const keys = s.apps.map((a) => a.key);
+  if (new Set(keys).size !== keys.length) throw new Error('App 标识不能重复');
+  const old = Object.keys(YAML.parse(readFileSync(config, 'utf8'))?.apps ?? {});
+  for (const k of old.filter((k) => !keys.includes(k))) del(['apps', k]);
+  for (const a of s.apps) {
+    if (!KEY_RE.test(a.key)) throw new Error(`App 标识“${a.key}”只能用小写字母、数字、- 和 _`);
+    doc.setIn(['apps', a.key, 'appid'], checkAppid(a.appid));
+    if (a.name?.trim()) doc.setIn(['apps', a.key, 'name'], a.name.trim()); else del(['apps', a.key, 'name']);
+    if (a.languages?.length) doc.setIn(['apps', a.key, 'languages'], checkLanguages(a.languages)); else del(['apps', a.key, 'languages']);
+    if (a.screenshotsAllAges === null || a.screenshotsAllAges === undefined) del(['apps', a.key, 'assets', 'screenshotsAllAges']);
+    else doc.setIn(['apps', a.key, 'assets', 'screenshotsAllAges'], !!a.screenshotsAllAges);
+    // 删掉 screenshotsAllAges 后 assets 变成空的就整个删掉
+    const assets = doc.getIn(['apps', a.key, 'assets']) as any;
+    if (assets && YAML.isMap(assets) && assets.items.length === 0) del(['apps', a.key, 'assets']);
+  }
+  const text = doc.toString({ lineWidth: 0 });
+  writeFileSync(config, text);
+  loadConfig(config); // 写完再整体校验一次
+}
+
+// ---------------- AI 规则文件 ----------------
+
+export const rulesPath = (config: string) => join(dirname(config), 'STEAM_RULES.md');
+
+export function readRules(config: string): { path: string; text: string; exists: boolean } {
+  const path = rulesPath(config);
+  return { path, exists: existsSync(path), text: existsSync(path) ? readFileSync(path, 'utf8') : readFileSync(join(PKG_ROOT, 'templates', 'STEAM_RULES.md'), 'utf8') };
+}
+
+export function writeRules(config: string, text: string) {
+  writeFileSync(rulesPath(config), text);
+}

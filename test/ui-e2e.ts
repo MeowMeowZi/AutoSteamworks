@@ -1,17 +1,19 @@
-// 后台网页的端到端测试（模拟后台）：状态接口、改动高亮、规则检查、本地编辑、只上传勾选的字段、图片、安全限制、文件变动推送
+// 后台网页的端到端测试（模拟后台）：项目管理、初始化、设置、AI 规则、状态接口、改动高亮、规则检查、本地编辑、只上传勾选的字段、图片、安全限制、文件变动推送
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { start } from './mock-partner.js';
 import { png } from './png.js';
+import YAML from 'yaml';
 import { startUi } from '../src/ui/server.js';
 
 const run = promisify(execFile);
 const srv = await start();
 const ws = mkdtempSync(join(tmpdir(), 'autosw-ui-'));
+process.env.AUTOSW_HOME = join(ws, 'home'); // 项目列表放临时目录，不碰真实的 ~/.autosteamworks
 const cfgFile = join(ws, 'steam.config.yaml');
 writeFileSync(cfgFile, `
 browser: { profileDir: .autosw/profile }  # 不用真实的共享登录
@@ -25,12 +27,16 @@ const cli = async (...a: string[]) => (await run(process.execPath,
 const store = join(ws, 'apps', 'game', 'store');
 const remote = () => srv.db['1100'];
 
-const ui = await startUi(cfgFile, 0);
+const ui = await startUi({ port: 0, open: cfgFile });
 const origin = ui.url.replace(/\/$/, '');
+const P = cfgFile; // 当前项目（启动时通过 open 加入）
 const get = async (path: string) => (await fetch(origin + path)).json() as Promise<any>;
-const post = (path: string, body: unknown, o = origin) =>
+const rawPost = (path: string, body: unknown, o = origin) =>
   fetch(origin + path, { method: 'POST', headers: { 'content-type': 'application/json', origin: o }, body: JSON.stringify(body) });
-const game = async () => (await get('/api/state')).apps[0];
+const post = (path: string, body: object, o = origin) => rawPost(path, { project: P, ...body }, o);
+const stateOf = (project = P) => get('/api/state?project=' + encodeURIComponent(project));
+const game = async () => (await stateOf()).current.apps[0];
+const asset = (rel: string) => fetch(origin + `/api/asset?project=${encodeURIComponent(P)}&app=game&rel=${encodeURIComponent(rel)}`);
 const field = (a: any, lang: string, path: string) => a.localized.find((r: any) => r.path === path)?.langs[lang];
 
 /** 等后台任务结束，返回期间的日志 */
@@ -39,7 +45,7 @@ async function runJob(body: object) {
   assert.equal(r.status, 202, await r.text());
   for (let i = 0; i < 300; i++) {
     await new Promise((ok) => setTimeout(ok, 200));
-    if (!(await get('/api/state')).job) return;
+    if (!(await stateOf()).job) return;
   }
   throw new Error('任务超时');
 }
@@ -58,6 +64,56 @@ function listen() {
 let ok = false;
 try {
   assert.match(await (await fetch(origin + '/')).text(), /AutoSteamworks/);
+  assert.deepEqual(await get('/api/ping'), { app: 'autosteamworks' });
+
+  // ---- 项目管理：添加一个空文件夹 → 网页上初始化 → 设置 → AI 规则 → 移除 ----
+  const g2 = join(ws, 'game2');
+  mkdirSync(g2);
+  writeFileSync(join(g2, '.gitignore'), 'Library/');
+  const c2 = join(g2, 'steam.config.yaml');
+  assert.equal((await rawPost('/api/projects/add', { path: g2 })).status, 200);
+  let st = await get('/api/state');
+  assert.deepEqual(st.projects.map((p: any) => [p.config, p.configured]), [[P, true], [c2, false]], '启动时 open 的项目和新加的都在列表里');
+  assert.equal(st.openProject, P);
+  assert.equal((await rawPost('/api/projects/add', { path: join(ws, 'nope') })).status, 500, '不存在的路径');
+  let r = await rawPost('/api/projects/init', { project: c2, name: '第二个游戏', appid: 'abc', languages: ['english'] });
+  assert.match((await r.json()).error, /appid/);
+  r = await rawPost('/api/projects/init', { project: c2, name: '第二个游戏', appid: 2000, languages: ['english', 'japanese'] });
+  assert.equal(r.status, 200);
+  assert.ok(existsSync(join(g2, 'STEAM_RULES.md')));
+  assert.match(readFileSync(join(g2, '.gitignore'), 'utf8'), /^Library\/\n# AutoSteamworks.*\n\.autosw\/\n$/);
+  st = await stateOf(c2);
+  assert.equal(st.current.configured, true);
+  assert.equal(st.current.apps[0].appid, 2000);
+  assert.deepEqual(st.current.apps[0].languages, ['english', 'japanese']);
+
+  const s2 = await get('/api/settings?project=' + encodeURIComponent(c2));
+  assert.deepEqual(s2.apps, [{ key: 'game', name: '第二个游戏', appid: 2000, languages: [], screenshotsAllAges: null }]);
+  writeFileSync(c2, '# 用户自己的注释\n' + readFileSync(c2, 'utf8'));
+  s2.apps[0].screenshotsAllAges = true;
+  s2.apps.push({ key: 'demo', name: '试玩版', appid: 2001, languages: ['english'], screenshotsAllAges: null });
+  assert.equal((await rawPost('/api/settings', { project: c2, settings: s2 })).status, 200);
+  let y = YAML.parse(readFileSync(c2, 'utf8'));
+  assert.match(readFileSync(c2, 'utf8'), /# 用户自己的注释/, '保留注释');
+  assert.equal(y.apps.game.assets.screenshotsAllAges, true);
+  assert.deepEqual(y.apps.demo, { appid: 2001, name: '试玩版', languages: ['english'] });
+  s2.apps = s2.apps.filter((x: any) => x.key !== 'demo');
+  s2.apps[0].screenshotsAllAges = null;
+  assert.equal((await rawPost('/api/settings', { project: c2, settings: s2 })).status, 200);
+  y = YAML.parse(readFileSync(c2, 'utf8'));
+  assert.deepEqual(Object.keys(y.apps), ['game']);
+  assert.equal(y.apps.game.assets, undefined, '空的 assets 被清掉');
+  assert.equal((await rawPost('/api/settings', { project: c2, settings: { ...s2, apps: [{ ...s2.apps[0], key: 'Bad Key' }] } })).status, 500);
+
+  const rules = await get('/api/rules?project=' + encodeURIComponent(c2));
+  assert.equal(rules.exists, true);
+  assert.equal((await rawPost('/api/rules', { project: c2, text: rules.text + '\n- 术语：邪神 = Evil God\n' })).status, 200);
+  assert.match(readFileSync(join(g2, 'STEAM_RULES.md'), 'utf8'), /邪神 = Evil God/);
+
+  assert.equal((await rawPost('/api/projects/remove', { project: c2 })).status, 200);
+  assert.ok(existsSync(c2), '移除项目不删文件');
+  assert.match((await (await rawPost('/api/rules', { project: c2, text: 'x' })).json()).error, /未知项目/, '不在列表里的项目不能读写');
+
   let a = await game();
   assert.equal(a.pulled, false);
 
@@ -101,7 +157,7 @@ try {
 
   // 安全：其他网站的页面不能调用写接口；图片接口不能读 assets 目录以外的文件
   assert.equal((await post('/api/field', { app: 'game', key: 'app[name]', value: 'x' }, 'http://evil.example')).status, 403);
-  assert.equal((await fetch(origin + '/api/asset?app=game&rel=' + encodeURIComponent('../store/_common.yaml'))).status, 404);
+  assert.equal((await asset('../store/_common.yaml')).status, 404);
 
   // 和线上对比：线上改了网站链接（本地没动）
   remote()['app[content][links][website]'] = 'https://example.com';
@@ -128,7 +184,7 @@ try {
   assert.equal((await first).status, 202);
   assert.equal((await post('/api/run', { app: 'game', action: 'diff' })).status, 409);
   await runJob({ action: 'diff' }).catch(() => {}); // 等前一个结束
-  for (let i = 0; i < 100 && (await get('/api/state')).job; i++) await new Promise((r) => setTimeout(r, 200));
+  for (let i = 0; i < 100 && (await stateOf()).job; i++) await new Promise((r) => setTimeout(r, 200));
 
   // 图片：列出状态、预览、只上传勾选的
   const put = (rel: string, data: Buffer) => {
@@ -149,7 +205,7 @@ try {
   assert.ok(a.images.issues.some((i: any) => /bad\.png.*100x100/.test(i.msg)), '尺寸不对的图报错');
   assert.deepEqual(a.images.pending, ['store/english/header.png', 'store/english/small.png'], '尺寸不对的图不算待上传');
   assert.equal(a.summary.imagesPending, 2);
-  const img = await fetch(origin + '/api/asset?app=game&rel=store/english/header.png');
+  const img = await asset('store/english/header.png');
   assert.equal(img.headers.get('content-type'), 'image/png');
 
   await runJob({ action: 'assets', only: ['store/english/small.png'] });
@@ -158,7 +214,7 @@ try {
   assert.equal(cell(a, 'small_capsule', 'english').status, 'synced', '上传后自动读取后台状态并核对');
   assert.match(cell(a, 'small_capsule', 'english').remoteUrl, /h1\/small\.png$/);
   assert.equal(cell(a, 'header', 'english').status, 'pending');
-  const lr = (await get('/api/state')).lastResult;
+  const lr = (await stateOf()).lastResult;
   assert.ok(lr.ok && lr.lines.some((l: string) => l.startsWith('后台位置：商店页管理 → 图像资产 → 商店资产 → 小宣传图 → english')), '结果框写明后台位置');
 
   // 字段显示成后台上的名字

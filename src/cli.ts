@@ -1,15 +1,16 @@
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import type { Page } from 'playwright-core';
 import { loadConfig, selectApps, type AppConfig, type Config } from './config.js';
-import { openBrowser, isLoginPage, hasLoginCookie, sleep, PARTNER_HOME } from './browser.js';
+import { openBrowser } from './browser.js';
+import { ensureGitignore } from './projects.js';
 import { loadStorePage, storeEditUrl } from './partner/store.js';
 import { hasLocal, readLocal, readSnapshot, splitLocalized } from './local/storeFiles.js';
 import { localEdits } from './sync.js';
 import { lint } from './lint.js';
 import { runBuild } from './build/steampipe.js';
-import { assetsApp, diffApp, pullApp, display, DRAFT_NOTE, preview, printChange, pushApp } from './ops.js';
+import { assetsApp, diffApp, loginFlow, pullApp, display, DRAFT_NOTE, preview, printChange, pushApp } from './ops.js';
 
 const program = new Command('autosw')
   .description('把本地文件同步到 Steamworks 后台')
@@ -44,14 +45,7 @@ program.command('init').description('在当前目录生成示例配置 steam.con
     copyFileSync(src, dst);
     console.log(`已生成 ${dst}`);
   }
-  // 快照、上传记录不该进游戏项目的 git；旧版的登录 Cookie 也可能在这里
-  const gi = '.gitignore';
-  const text = existsSync(gi) ? readFileSync(gi, 'utf8') : '';
-  const lines = text.split(/\r?\n/).map((l) => l.trim());
-  if (!lines.some((l) => l === '.autosw/' || l === '.autosw' || l === '/.autosw/')) {
-    appendFileSync(gi, (text && !text.endsWith('\n') ? '\n' : '') + '# AutoSteamworks 的本地状态\n.autosw/\n');
-    console.log('已把 .autosw/ 加进 .gitignore');
-  }
+  if (ensureGitignore(process.cwd())) console.log('已把 .autosw/ 加进 .gitignore');
   console.log('请在 steam.config.yaml 里填入 appid，在 STEAM_RULES.md 末尾填写本项目的风格和术语表');
 });
 
@@ -62,20 +56,7 @@ program.command('apps').description('列出配置中的 App').action(() => {
 });
 
 program.command('login').description('打开浏览器手动登录 Steamworks，保存会话').action(async () => {
-  const c = cfg();
-  const { ctx, page } = await openBrowser(c, false);
-  await page.goto(PARTNER_HOME);
-  console.log('请在弹出的浏览器里登录 Steamworks（包括 Steam Guard），登录成功后会自动检测并保存（最多等 10 分钟）…');
-  const deadline = Date.now() + 10 * 60_000;
-  let ok = false;
-  while (!ok && Date.now() < deadline && ctx.pages().length > 0) {
-    await sleep(2000);
-    ok = (await hasLoginCookie(ctx)) && !isLoginPage(page.url());
-  }
-  if (ok) await sleep(3000); // 让 Steam 完成重定向、写完剩下的 Cookie
-  await ctx.close().catch(() => {});
-  console.log(ok ? `✓ 登录成功，会话已保存在 ${c.profileDir}` : '✗ 仍然是未登录状态，请重试');
-  process.exitCode = ok ? 0 : 1;
+  process.exitCode = (await loginFlow(cfg(), log)) ? 0 : 1;
 });
 
 program.command('inspect <app>')
@@ -188,20 +169,38 @@ program.command('build <app>').description('通过 steamcmd / SteamPipe 上传�
     await runBuild(c, app, { desc: o.desc, preview: !!o.preview, dryRun: !!o.dryRun });
   });
 
-program.command('ui').description('打开本地后台网页：查看本地内容和改动，勾选后一键上传')
+program.command('ui', { isDefault: true }).description('打开本地后台网页（不带命令时默认就是这个）：管理项目、查看改动、一键上传、修改配置')
   .option('-p, --port <port>', '端口', '5180')
   .option('--no-open', '不自动打开浏览器')
   .action(async (o) => {
-    cfg(); // 先校验配置
-    const { startUi } = await import('./ui/server.js');
-    const { url } = await startUi(program.opts().config, Number(o.port));
-    console.log(`后台网页已启动：${url}\n本地文件改动（编辑器或 AI 修改）会自动刷新到网页上。按 Ctrl+C 退出。`);
-    if (o.open) {
-      const { spawn } = await import('node:child_process');
-      const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : [process.platform === 'darwin' ? 'open' : 'xdg-open', [url]];
-      spawn(cmd, args as string[], { stdio: 'ignore', detached: true }).unref();
+    const { openUrl } = await import('./desktop.js');
+    const port = Number(o.port);
+    // 用 -c 指定了配置，或者当前目录就是游戏项目，就把它加进项目列表并打开
+    const cfgOpt = program.opts().config as string;
+    const explicit = program.getOptionValueSource('config') === 'cli';
+    const here = existsSync(cfgOpt) || explicit ? cfgOpt : undefined;
+    const project = here && (await import('node:path')).resolve(here);
+    const link = (base: string) => base + (project ? `?open=${encodeURIComponent(project)}` : '');
+
+    // 已经在运行（比如又双击了一次快捷方式）：直接打开已有的网页
+    const running = await fetch(`http://127.0.0.1:${port}/api/ping`).then((r) => r.json()).catch(() => null) as { app?: string } | null;
+    if (running?.app === 'autosteamworks') {
+      const url = link(`http://127.0.0.1:${port}/`);
+      console.log(`后台网页已经在运行：${url}`);
+      if (o.open) openUrl(url);
+      return;
     }
+    const { startUi } = await import('./ui/server.js');
+    const { url } = await startUi({ port, open: project, onQuit: () => { console.log('已从网页退出'); process.exit(0); } });
+    console.log(`后台网页已启动：${link(url)}
+关掉这个窗口或者在网页右上角点“退出”就会停止。`);
+    if (o.open) openUrl(link(url));
   });
+
+program.command('shortcut').description('在桌面和开始菜单创建“AutoSteamworks”快捷方式（Windows）').action(async () => {
+  const { createShortcuts } = await import('./desktop.js');
+  for (const p of await createShortcuts()) console.log(`✓ ${p}`);
+});
 
 program.parseAsync().catch((e) => {
   console.error(`错误: ${e instanceof Error ? e.message : e}`);

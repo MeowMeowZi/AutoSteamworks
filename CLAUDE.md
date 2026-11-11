@@ -15,6 +15,7 @@ Steamworks **没有**修改商店页面的官方 API，所以一切都靠操作�
 | `assets`：宣传图、库资源、截图 | ✅ 真实后台验证（上传了 schinese 形象图片，并从后台数据核对） |
 | `ui`：本地后台网页（查看、编辑、规则检查、勾选上传）+ `check`（离线规则检查） | ✅ 模拟后台测试通过；在真实项目上打开过页面（只读），还没在网页上真实上传过 |
 | 打包：`npm i -g github:MeowMeowZi/AutoSteamworks` 后在任何目录用 `autosw` | ✅ 用 npm pack + 全局安装到临时目录（omit=dev）验证过 init / help / ui |
+| 启动项 + 网页里管理一切：`install.ps1` 一键安装并创建快捷方式；网页上添加项目、初始化、设置、AI 规则、登录、退出 | ✅ 模拟后台测试 + 沙盒里用 Edge 点过完整流程；快捷方式在临时目录验证过；install.ps1 只做了语法检查，还没在干净的机器上跑过 |
 | `build`：生成 VDF + 调用 steamcmd | ⚠ 已实现但从未真实运行；配置里 `steamcmd.user` 还是占位值，`builds/windows` 目录也不存在 |
 | `push --publish`：发布 | ⏳ 未做，发布页面还没探查过 |
 | 成就 | ⏳ 未做（后台地址 `https://partner.steamgames.com/apps/achievements/5596340`） |
@@ -51,7 +52,10 @@ Steamworks **没有**修改商店页面的官方 API，所以一切都靠操作�
 
 ```
 bin/autosw.js              命令入口：用 tsx 的 register() 直接加载 src/cli.ts，没有构建步骤（tsx 因此是运行时依赖）
-src/cli.ts                 所有命令
+src/cli.ts                 所有命令；不带命令时默认运行 ui，端口已被占用时直接打开已有的网页
+src/projects.ts            项目列表（~/.autosteamworks/projects.json）、网页上的初始化、设置读写（YAML Document，保留注释）、STEAM_RULES.md 读写
+src/desktop.ts             Windows：创建快捷方式（WScript.Shell）、选择文件夹对话框（FolderBrowserDialog）、打开网址
+install.ps1                一键安装脚本，必须保持 UTF-8 无 BOM（BOM 会让 irm | iex 报错）
 src/config.ts              steam.config.yaml 解析（多 App、各 App 可覆盖 store/assets/build 配置）
 src/browser.ts             持久化浏览器、登录检测、settle()
 src/partner/form.ts        通用表单读写（按 name 定位；hidden/radio/checkbox）+ FormData 提交
@@ -90,7 +94,10 @@ scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-
 - **先只读探查，再写代码**：遇到新的后台页面，先写 `scripts/` 下的只读脚本，看 DOM、全局变量、后台的 JS，必要时用 curl 下载 `public/javascript/*.js` 到临时目录用 grep 读。不要靠猜。
 - **第一次真实写入前要征得用户同意**：先 `--dry-run`，再真正执行，写完后要从后台核对结果。保存的都是草稿，不点发布就不会上线。
 - **每个功能都要有模拟后台的端到端测试**：`npm test` 跑三套测试。注意测试必须异步调用 CLI，因为模拟服务器在同一个进程里，同步调用会把它卡死。
-- **测试配置必须写 `browser.profileDir`**（指向临时目录），否则会用到真实的共享登录。
+- **测试配置必须写 `browser.profileDir`**（指向临时目录），否则会用到真实的共享登录；网页测试还要设 `AUTOSW_HOME` 到临时目录，否则会改到真实的项目列表。
+- **网页接口都带 project 参数**（配置文件路径），服务器只接受项目列表里的路径。同一时间只跑一个任务（共用一个浏览器配置文件）。
+- **在 Bash 里用 heredoc / sed 写含反斜杠的代码很容易被吃掉**：这类修改用 Write 写 .autosw/ 下的临时 python 脚本再运行，或者直接用 Edit。
+- **用户希望别人装好后双击快捷方式就能用，所有配置都在网页上完成**，新功能要优先在网页上提供入口。
 - **规则检查只写确认过的规则**：简短描述的 200-300 是 2026-11-11 从真实编辑页的脚本里读到的（按 JS `.length` 计数，超过 300 只是标红，不阻止保存）。新增规则前先探查。
 - **用户的使用方式**：这个工具以后会放进其他准备上架的游戏项目里用。网页负责查看和上传；AI（Claude Code）按游戏项目里的 `STEAM_RULES.md` 改本地文件，不直接上传。
 - **用户的环境**：`NODE_ENV=production` 且 npm `omit=dev`，安装依赖要用 `npm i --include=dev`。TypeScript 7 需要在 tsconfig 里显式写 `"types": ["node"]`。

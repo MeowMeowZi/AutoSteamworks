@@ -2,6 +2,7 @@
 import { createTwoFilesPatch } from 'diff';
 import type { Page } from 'playwright-core';
 import type { AppConfig, Config } from './config.js';
+import { hasLoginCookie, isLoginPage, openBrowser, PARTNER_HOME, sleep } from './browser.js';
 import type { FieldValue } from './partner/form.js';
 import { fetchRemote, pushStore } from './partner/store.js';
 import { hasLocal, readLocal, readSnapshot, splitLocalized, writeLocal, writeSnapshot } from './local/storeFiles.js';
@@ -160,6 +161,26 @@ export async function assetsApp(page: Page, c: Config, app: AppConfig, o: Assets
     if (pushed) { await openAssetsPage(page, c, app); await saveRemoteMeta(page, c, app); }
   }
   return { failed, pushed };
+}
+
+/** 弹出浏览器让用户手动登录 Steamworks，检测到登录 Cookie 后保存。返回是否成功 */
+export async function loginFlow(c: Pick<Config, 'profileDir' | 'browserChannel'>, log: Log, timeoutMs = 10 * 60_000) {
+  const { ctx, page } = await openBrowser(c, false);
+  try {
+    await page.goto(PARTNER_HOME);
+    log('请在弹出的浏览器窗口里登录 Steamworks（包括 Steam Guard），登录成功后会自动检测并保存（最多等 10 分钟）…');
+    const deadline = Date.now() + timeoutMs;
+    let ok = false;
+    while (!ok && Date.now() < deadline && ctx.pages().length > 0) {
+      await sleep(2000);
+      ok = (await hasLoginCookie(ctx)) && !isLoginPage(page.url());
+    }
+    if (ok) await sleep(3000); // 让 Steam 完成重定向、写完剩下的 Cookie
+    log(ok ? `✓ 登录成功，所有项目共用这个登录（保存在 ${c.profileDir}）` : '✗ 没有检测到登录（浏览器被关掉了或超时），请重试');
+    return ok;
+  } finally {
+    await ctx.close().catch(() => {});
+  }
 }
 
 export const DRAFT_NOTE = '提醒：改动已保存为草稿，要在 Steamworks 的“发布”页面发布后才会在商店生效。';

@@ -19,6 +19,23 @@
   header h1 { font-size:16px; margin:0; }
   header .cfg { color:#9fb3c8; font-size:12px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   header .job { font-size:13px; color:#ffd666; }
+  header .hb { background:transparent; color:#c7d5e0; border:1px solid #3d5266; border-radius:6px; padding:4px 12px; cursor:pointer; font-family:inherit; font-size:13px; }
+  header .hb:hover { border-color:#c7d5e0; color:#fff; }
+  nav .sec { padding:10px 16px 4px; font-size:12px; color:var(--muted); }
+  nav .proj { padding:0 12px 8px; border-bottom:1px solid var(--line); margin-bottom:6px; }
+  nav .proj select { width:100%; }
+  nav .link { display:block; padding:8px 16px; cursor:pointer; color:inherit; text-decoration:none; border-left:3px solid transparent; }
+  nav .link.on { background:var(--accent-bg); border-left-color:var(--accent); color:var(--accent); font-weight:600; }
+  .form { display:grid; grid-template-columns:150px 1fr; gap:12px 16px; align-items:start; }
+  .form > label { padding-top:6px; font-weight:600; font-size:13px; }
+  .form input[type=text], .form input[type=number] { padding:6px 10px; border:1px solid #cfd4db; border-radius:6px; font:inherit; width:320px; }
+  .langs { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:2px 10px; font-size:13px; }
+  .help { font-size:12px; color:var(--muted); margin-top:3px; }
+  table.apps { width:100%; border-collapse:collapse; font-size:13px; }
+  table.apps th, table.apps td { border-top:1px solid var(--line); padding:8px; text-align:left; vertical-align:top; }
+  table.apps input[type=text], table.apps input[type=number] { width:100%; padding:5px 8px; border:1px solid #cfd4db; border-radius:6px; font:inherit; }
+  .err-box { background:var(--err-bg); color:var(--err); border-radius:8px; padding:10px 14px; margin-bottom:12px; }
+  textarea.rules { min-height:calc(100vh - 330px); }
   .layout { display:flex; min-height:calc(100vh - 48px); }
   nav { width:230px; flex:none; border-right:1px solid var(--line); background:var(--card); padding:12px 0; }
   nav .app { display:block; padding:10px 16px; cursor:pointer; border-left:3px solid transparent; }
@@ -134,7 +151,9 @@
 </style>
 </head>
 <body>
-<header><h1>AutoSteamworks</h1><span class="cfg" id="cfg"></span><span class="job" id="job"></span></header>
+<header><h1>AutoSteamworks</h1><span class="cfg" id="cfg"></span><span class="job" id="job"></span>
+  <button class="hb" data-login title="所有项目共用一个 Steam 登录。第一次使用或者登录过期时点这里">登录 Steam</button>
+  <button class="hb" data-quit title="停止这个后台网页（下次从桌面快捷方式打开）">退出</button></header>
 <div class="layout">
   <nav id="nav"></nav>
   <main id="main"><div class="empty-state">加载中…</div></main>
@@ -148,10 +167,12 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 const LANG = { english: '英语', schinese: '简体中文', tchinese: '繁体中文', japanese: '日语', koreana: '韩语', '*': '所有语言' };
 const langName = (l) => LANG[l] || l;
 const KIND = { local: ['本地改动', 'info'], remote: ['后台被改过', 'warn'], conflict: ['冲突：两边都改了', 'err'], gone: ['后台已没有这个字段', 'err'] };
-const ACTION = { pull: '从后台拉取', diff: '刷新后台状态', push: '上传文本', assets: '上传图片' };
+const ACTION = { pull: '从后台拉取', diff: '刷新后台状态', push: '上传文本', assets: '上传图片', login: '登录 Steam' };
 const CELL_PILL = { pending: 'info', synced: 'ok', uploaded: 'ok', lost: 'err', 'remote-only': 'warn', 'missing-required': 'err', fallback: '', empty: '' };
 
 let S = null;
+let project = localStorage.project || '';   // 当前项目（配置文件路径）
+let page = 'app';                            // app | projects | settings | rules
 let cur = localStorage.appKey || null;
 let tab = localStorage.tab || 'text';
 let subtab = localStorage.subtab || '描述';
@@ -166,8 +187,24 @@ async function api(path, body) {
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
+const P = (body) => ({ project, ...body });
+let firstLoad = true;
 async function load() {
+  // 从快捷方式或命令行带过来的项目：?open=<路径>
+  const open = new URLSearchParams(location.search).get('open');
+  if (open) {
+    try { project = (await api('/api/projects/add', { path: open })).config; } catch (e) { alert(e.message); }
+    history.replaceState(null, '', '/');
+  }
   S = await api('/api/state');
+  const known = (p) => S.projects.some((x) => x.config === p);
+  if (!known(project)) project = (firstLoad && S.openProject) || S.projects[0]?.config || '';
+  if (firstLoad && S.openProject && !open && !localStorage.project) project = S.openProject;
+  firstLoad = false;
+  localStorage.project = project;
+  if (project) S = await api('/api/state?project=' + encodeURIComponent(project));
+  if (!S.projects.length) page = 'projects';
+  S.apps = S.current?.apps ?? [];
   if (!S.apps.find((a) => a.key === cur)) cur = S.apps[0]?.key;
   render();
 }
@@ -244,13 +281,16 @@ function renderOverview(a) {
 
 function renderResult(a) {
   const r = S.lastResult;
-  if (!r || r.app !== a.key || resultSeen === r.at) return '';
+  if (!r || resultSeen === r.at) return '';
+  if (r.action !== 'login' && (r.project !== project || r.app !== a?.key)) return '';
   const title = !r.ok ? `${ACTION[r.action]}失败` : r.dryRun ? `${ACTION[r.action]}：演练完成（没有真正上传）` : `${ACTION[r.action]}完成`;
   const cls = !r.ok ? 'fail' : r.dryRun ? 'dry' : 'ok';
   return `<div class="result ${cls}"><div class="row"><h3>${!r.ok ? '✗' : '✓'} ${esc(title)}</h3><span class="sp"></span>
     <span class="small muted">${new Date(r.at).toLocaleTimeString()}</span> <a data-dismiss="${esc(r.at)}">关闭</a></div>
     ${r.lines.length ? `<ul>${r.lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}
     ${r.ok && !r.dryRun && (r.action === 'push' || r.action === 'assets') ? '<div class="small" style="margin-top:6px">已保存为后台草稿。在 Steamworks 后台的“发布”页签发布后，商店上才会看到。</div>' : ''}
+    ${r.needLogin ? '<div style="margin-top:8px"><button class="b primary" data-login>登录 Steam</button> <span class="small">Steam 登录过期了，登录后再试一次</span></div>' : ''}
+    ${r.ok && r.action === 'login' ? '<div class="small" style="margin-top:6px">下一步：在左边选一个 App，点“从后台拉取”。</div>' : ''}
     ${!r.ok ? '<div class="small" style="margin-top:6px"><a data-openlog>打开完整日志</a></div>' : ''}
   </div>`;
 }
@@ -344,7 +384,7 @@ function thumb(cap, url, emptyText) {
     ? `<div class="box"><img loading="lazy" src="${esc(url)}" onerror="this.parentNode.textContent='缩略图加载失败'"></div>`
     : `<div class="box none">${emptyText}</div>`}</div>`;
 }
-const localUrl = (a, rel, v) => `/api/asset?app=${encodeURIComponent(a.key)}&rel=${encodeURIComponent(rel)}&v=${v}`;
+const localUrl = (a, rel, v) => `/api/asset?project=${encodeURIComponent(project)}&app=${encodeURIComponent(a.key)}&rel=${encodeURIComponent(rel)}&v=${v}`;
 
 function imgCell(a, slot, lang, span) {
   const c = slot.cells[lang];
@@ -431,27 +471,183 @@ function renderActionBar(a) {
   bar.style.display = 'flex';
 }
 
+// ================= 项目 =================
+function projectStatus(p) {
+  if (!p.exists) return '<span class="pill err">文件夹不存在</span>';
+  if (p.error) return `<span class="pill err">配置有错：${esc(p.error)}</span>`;
+  if (!p.configured) return '<span class="pill warn">还没初始化</span>';
+  return `<span class="pill ok">${p.apps.length} 个 App</span>`;
+}
+function renderProjects() {
+  let h = `<div class="overview"><h2>游戏项目</h2>
+    <div class="muted small">每个游戏项目是电脑上的一个文件夹，商店文本和图片都存在里面（一般就是游戏工程的根目录）。所有项目共用一个 Steam 登录。</div>
+    <div class="row" style="margin-top:14px">
+      ${S.windows ? '<button class="b primary" data-pickfolder>选择文件夹…</button><span class="muted small">或者</span>' : ''}
+      <input type="search" id="newpath" placeholder="粘贴文件夹路径，例如 D:\\Games\\MyGame" style="width:420px">
+      <button class="b" data-addpath>添加</button>
+    </div></div>`;
+  if (!S.projects.length) {
+    h += `<div class="card"><div class="bd"><b>第一次使用？</b><ol style="margin:6px 0 0;padding-left:20px;line-height:1.9">
+      <li>点“选择文件夹…”选择游戏项目的文件夹，填写游戏名称和 App ID。</li>
+      <li>点右上角“登录 Steam”，在弹出的浏览器里登录 Steamworks（只需要一次）。</li>
+      <li>点“从后台拉取”，把商店页内容下载到本地，然后就可以修改、上传了。</li></ol></div></div>`;
+  }
+  for (const p of S.projects) {
+    h += `<div class="card"><div class="bd row"><div><b style="font-size:15px">${esc(p.name)}</b> ${projectStatus(p)}
+      <div class="mono muted">${esc(p.dir)}</div>
+      ${p.apps.length ? `<div class="small muted">${p.apps.map((a) => `${esc(a.name || a.key)}（${a.appid}）`).join('、')}</div>` : ''}</div>
+      <span class="sp"></span>
+      ${p.config === project ? '<span class="pill info">当前项目</span>' : ''}
+      <button class="b ${p.config === project ? '' : 'primary'}" data-openproj="${esc(p.config)}">打开</button>
+      <button class="b" data-removeproj="${esc(p.config)}" title="只是从列表里去掉，不删除任何文件">移除</button></div></div>`;
+  }
+  if (S.windows) h += `<div class="small muted">想从桌面直接打开这个网页？<a data-shortcut>创建桌面快捷方式</a></div>`;
+  return h;
+}
+
+function renderInit() {
+  const p = S.current;
+  const def = ['english', 'schinese'];
+  return `<div class="overview"><h2>初始化项目：${esc(p.folder)}</h2>
+    <div class="muted small">这个文件夹还没有 AutoSteamworks 的配置。填好下面的信息，会在文件夹里生成 steam.config.yaml（配置）和 STEAM_RULES.md（给 AI 看的规则），并把 .autosw/ 加进 .gitignore。</div>
+    <div class="mono muted small" style="margin-top:4px">${esc(p.dir)}</div></div>
+    <div class="card"><div class="bd"><div class="form">
+      <label>游戏名称</label><div><input type="text" id="i-name" placeholder="例如：邪神今天也在挂机"><div class="help">只在这个网页上显示，不会同步到 Steam</div></div>
+      <label>App ID</label><div><input type="number" id="i-appid" placeholder="例如：5596340"><div class="help">在 Steamworks 后台，游戏名称后面括号里的数字</div></div>
+      <label>同步的语言</label><div><div class="langs">${S.langs.map((l) => `<label><input type="checkbox" class="i-lang" value="${l.id}" ${def.includes(l.id) ? 'checked' : ''}> ${esc(l.name)}</label>`).join('')}</div>
+        <div class="help">只拉取、上传这些语言的商店文本。建议包含英语（Steam 的默认语言）。以后可以在“设置”里改</div></div>
+      <label></label><div><button class="b primary" data-init>创建配置</button></div>
+    </div></div></div>`;
+}
+
+// ================= 设置 =================
+let draft = null, draftFor = '', settingsError = '';
+async function loadSettings() {
+  draft = await api('/api/settings?project=' + encodeURIComponent(project));
+  draftFor = project; settingsError = '';
+  render();
+}
+function langChecks(cls, selected, idx) {
+  return `<div class="langs">${S.langs.map((l) => `<label><input type="checkbox" class="${cls}" data-idx="${idx ?? ''}" value="${l.id}" ${selected.includes(l.id) ? 'checked' : ''}> ${esc(l.name)}</label>`).join('')}</div>`;
+}
+function renderSettings() {
+  if (!draft || draftFor !== project) { loadSettings(); return '<div class="empty-state">加载中…</div>'; }
+  const d = draft;
+  let h = `<div class="overview"><h2>设置</h2><div class="muted small">修改后点最下面的“保存”。保存会写入 <span class="mono">${esc(S.current.config)}</span>，文件里的其他内容和注释保持不变。</div></div>`;
+  if (settingsError) h += `<div class="err-box">✗ ${esc(settingsError)}</div>`;
+  h += `<div class="card"><div class="hd"><h3>同步的语言</h3><span class="small muted">所有 App 默认使用这些语言</span></div><div class="bd">${langChecks('s-lang', d.languages)}</div></div>`;
+  h += `<div class="card"><div class="hd"><h3>App</h3><span class="small muted">游戏本体、试玩版、DLC 各是一个 App，各有自己的 App ID</span></div><div class="bd">
+    <table class="apps"><thead><tr><th style="width:140px">标识</th><th>名称</th><th style="width:130px">App ID</th><th style="width:190px">截图适合所有年龄</th><th style="width:130px">语言</th><th style="width:50px"></th></tr></thead><tbody>
+    ${d.apps.map((a, i) => `<tr>
+      <td>${a.isNew ? `<input type="text" class="s-app" data-idx="${i}" data-k="key" value="${esc(a.key)}" placeholder="例如 demo">` : `<span class="mono">${esc(a.key)}</span>`}
+        <div class="help">本地文件夹 apps/${esc(a.key || '…')}/</div></td>
+      <td><input type="text" class="s-app" data-idx="${i}" data-k="name" value="${esc(a.name)}"></td>
+      <td><input type="number" class="s-app" data-idx="${i}" data-k="appid" value="${a.appid || ''}"></td>
+      <td><select class="s-app" data-idx="${i}" data-k="screenshotsAllAges">
+        ${[['', '未设置（不能上传截图）'], ['true', '是'], ['false', '否']].map(([v, t]) => `<option value="${v}" ${String(a.screenshotsAllAges ?? '') === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+        <div class="help">Steam 要求每张截图都声明</div></td>
+      <td><label class="small"><input type="checkbox" class="s-own" data-idx="${i}" ${a.languages.length ? 'checked' : ''}> 单独设置</label>
+        ${a.languages.length ? '' : '<div class="help">跟随上面的语言</div>'}</td>
+      <td>${d.apps.length > 1 ? `<a data-delapp="${i}">删除</a>` : ''}</td></tr>
+      ${a.languages.length ? `<tr><td></td><td colspan="5">${langChecks('s-applang', a.languages, i)}</td></tr>` : ''}`).join('')}
+    </tbody></table>
+    <div style="margin-top:8px"><a data-addapp>+ 添加 App（试玩版、DLC…）</a> <span class="help">删除 App 只是不再同步，本地文件不会删</span></div></div></div>`;
+  h += `<div class="card"><div class="hd"><h3>高级</h3></div><div class="bd"><div class="form">
+    <label>浏览器</label><div><select id="s-browser">${[['msedge', 'Microsoft Edge（推荐，Windows 自带）'], ['chrome', 'Google Chrome']].map(([v, t]) => `<option value="${v}" ${d.browser === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <div class="help">用来登录和操作 Steamworks 后台。换浏览器后需要重新登录</div></div>
+    <label>请求间隔（毫秒）</label><div><input type="number" id="s-delay" value="${d.delayMs}" style="width:120px"><div class="help">两次打开后台页面之间等多久，避免请求太频繁</div></div>
+    <label>不同步的字段</label><div><textarea id="s-ignore" style="min-height:80px">${esc(d.ignoreFields.join('\n'))}</textarea><div class="help">每行一个表单字段名，支持 * 通配。“商店文本”页里每个字段下面的灰色小字就是字段名</div></div>
+  </div></div></div>`;
+  h += `<div class="row"><button class="b primary" data-savesettings>保存</button><button class="b" data-resetsettings>放弃修改</button>
+    <span class="sp"></span>${S.windows ? '<a class="small" data-shortcut>创建桌面快捷方式</a>' : ''}</div>`;
+  return h;
+}
+/** 把表单上的值收回 draft（重新渲染前调用，免得输入丢失） */
+function readDraftFromForm() {
+  const d = draft;
+  if (!d || !$('#s-browser')) return;
+  d.languages = [...document.querySelectorAll('.s-lang:checked')].map((x) => x.value);
+  d.browser = $('#s-browser').value;
+  d.delayMs = Number($('#s-delay').value);
+  d.ignoreFields = $('#s-ignore').value.split('\n').map((x) => x.trim()).filter(Boolean);
+  document.querySelectorAll('.s-app').forEach((el) => {
+    const a = d.apps[el.dataset.idx], k = el.dataset.k;
+    a[k] = k === 'appid' ? Number(el.value) : k === 'screenshotsAllAges' ? (el.value === '' ? null : el.value === 'true') : el.value;
+  });
+  d.apps.forEach((a, i) => {
+    if (a.languages.length) a.languages = [...document.querySelectorAll(`.s-applang[data-idx="${i}"]:checked`)].map((x) => x.value);
+  });
+}
+
+// ================= AI 规则 =================
+let rules = null, rulesFor = '';
+async function loadRules() { rules = await api('/api/rules?project=' + encodeURIComponent(project)); rulesFor = project; render(); }
+function renderRules() {
+  if (!rules || rulesFor !== project) { loadRules(); return '<div class="empty-state">加载中…</div>'; }
+  return `<div class="overview"><h2>AI 规则</h2>
+    <div class="muted small">让 AI（例如 Claude Code）修改商店内容时，它会读这个文件：里面有文件布局、Steam 的规则和 AI 必须遵守的约定（只改本地文件、不上传）。
+    最后一节“本项目的风格”请自己填：语气、术语表、不要出现的词。</div>
+    <div class="small" style="margin-top:6px">用法：在游戏项目文件夹里打开 AI，说“按 STEAM_RULES.md 把简短描述翻译成英文”。AI 改完文件，这个网页会自动显示改动，你看完再勾选上传。</div>
+    <div class="mono muted small" style="margin-top:4px">${esc(rules.path)}${rules.exists ? '' : '（还不存在，保存后创建）'}</div></div>
+    <textarea class="rules" id="rules">${esc(rules.text)}</textarea>
+    <div class="row" style="margin-top:8px"><button class="b primary" data-saverules>保存</button><span class="small muted" id="rules-msg"></span></div>`;
+}
+
+// ================= 总渲染 =================
+function renderNav() {
+  const cp = S.current;
+  let h = `<div class="sec">项目</div><div class="proj"><select id="projsel">
+    ${S.projects.map((p) => `<option value="${esc(p.config)}" ${p.config === project ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+    ${S.projects.length ? '' : '<option>（还没有项目）</option>'}</select>
+    <a class="small" data-page="projects">管理项目 / 添加项目</a></div>`;
+  if (cp?.configured && !cp.error) {
+    h += `<div class="sec">App</div>` + S.apps.map((a) => {
+      const s = a.summary;
+      return `<div class="app ${page === 'app' && a.key === cur ? 'on' : ''}" data-app="${esc(a.key)}"><b>${esc(a.name || a.key)}</b>
+        <small>${esc(a.key)} · ${a.appid}</small>
+        <div class="pills">${s.textEdits ? `<span class="pill info">文本 ${s.textEdits}</span>` : ''}${s.imagesPending ? `<span class="pill info">图片 ${s.imagesPending}</span>` : ''}${s.errors ? `<span class="pill err">${s.errors} 错误</span>` : ''}</div></div>`;
+    }).join('');
+    h += `<div class="sec">项目设置</div>
+      <a class="link ${page === 'settings' ? 'on' : ''}" data-page="settings">设置</a>
+      <a class="link ${page === 'rules' ? 'on' : ''}" data-page="rules">AI 规则</a>`;
+  }
+  return h;
+}
+
 function render() {
-  $('#cfg').textContent = S.config;
-  $('#job').textContent = S.job ? `⏳ 正在${ACTION[S.job.action]}（${S.job.app}）…` : '';
-  $('#nav').innerHTML = S.apps.map((a) => {
-    const s = a.summary;
-    return `<div class="app ${a.key === cur ? 'on' : ''}" data-app="${esc(a.key)}"><b>${esc(a.name || a.key)}</b>
-      <small>${esc(a.key)} · ${a.appid}</small>
-      <div class="pills">${s.textEdits ? `<span class="pill info">文本 ${s.textEdits}</span>` : ''}${s.imagesPending ? `<span class="pill info">图片 ${s.imagesPending}</span>` : ''}${s.errors ? `<span class="pill err">${s.errors} 错误</span>` : ''}</div></div>`;
-  }).join('');
-  const a = app();
-  if (!a) { $('#main').innerHTML = '<div class="empty-state">配置里没有 App</div>'; return; }
+  // 重新渲染前把表单里还没保存的输入收回来
+  if (page === 'settings' && draft && $('#s-browser')) readDraftFromForm();
+  if (page === 'rules' && rules && $('#rules')) rules.text = $('#rules').value;
+  $('#cfg').textContent = S.current ? S.current.dir : '';
+  $('#job').textContent = S.job ? `⏳ 正在${ACTION[S.job.action]}${S.job.app ? `（${S.job.app}）` : ''}…` : '';
+  document.querySelectorAll('header [data-login]').forEach((b) => b.disabled = !!S.job);
+  $('#nav').innerHTML = renderNav();
   const focus = document.activeElement?.id;
-  const s = a.summary;
-  $('#main').innerHTML = renderOverview(a) + renderResult(a) + `<div class="tabs">
-      <button data-tab="text" class="${tab === 'text' ? 'on' : ''}">商店文本 ${s.textEdits ? `<span class="pill info">${s.textEdits}</span>` : ''}</button>
-      <button data-tab="images" class="${tab === 'images' ? 'on' : ''}">图片 ${s.imagesPending ? `<span class="pill info">${s.imagesPending}</span>` : ''}</button>
-      <button data-tab="issues" class="${tab === 'issues' ? 'on' : ''}">问题 ${s.errors ? `<span class="pill err">${s.errors}</span>` : s.warnings ? `<span class="pill warn">${s.warnings}</span>` : ''}</button>
-    </div>` + (tab === 'text' ? renderText(a) : tab === 'images' ? renderImages(a) : renderIssues(a));
-  renderActionBar(a);
+  const cp = S.current;
+  let body = null;
+  if (page === 'projects' || !cp) body = renderProjects();
+  else if (!cp.exists) body = `<div class="empty-state">项目文件夹不存在：${esc(cp.dir)}<br><br><a data-page="projects">去项目列表</a></div>`;
+  else if (!cp.configured) body = renderInit();
+  else if (cp.error && page !== 'settings') body = `<div class="err-box">✗ 配置文件有错：${esc(cp.error)}</div><div class="small muted">可以在“设置”里修改，或者直接编辑 ${esc(cp.config)}</div>`;
+  else if (page === 'settings') body = renderSettings();
+  else if (page === 'rules') body = renderRules();
+
+  if (body !== null) {
+    $('#main').innerHTML = renderResult(app()) + body;
+    $('#actionbar').style.display = 'none';
+  } else {
+    const a = app();
+    if (!a) { $('#main').innerHTML = '<div class="empty-state">配置里没有 App，去“设置”里添加</div>'; $('#actionbar').style.display = 'none'; return; }
+    const s = a.summary;
+    $('#main').innerHTML = renderOverview(a) + renderResult(a) + `<div class="tabs">
+        <button data-tab="text" class="${tab === 'text' ? 'on' : ''}">商店文本 ${s.textEdits ? `<span class="pill info">${s.textEdits}</span>` : ''}</button>
+        <button data-tab="images" class="${tab === 'images' ? 'on' : ''}">图片 ${s.imagesPending ? `<span class="pill info">${s.imagesPending}</span>` : ''}</button>
+        <button data-tab="issues" class="${tab === 'issues' ? 'on' : ''}">问题 ${s.errors ? `<span class="pill err">${s.errors}</span>` : s.warnings ? `<span class="pill warn">${s.warnings}</span>` : ''}</button>
+      </div>` + (tab === 'text' ? renderText(a) : tab === 'images' ? renderImages(a) : renderIssues(a));
+    renderActionBar(a);
+  }
   if (S.job) document.querySelectorAll('[data-run]').forEach((b) => b.disabled = true);
-  if (focus === 'filter') { const f = $('#filter'); f.focus(); f.setSelectionRange(f.value.length, f.value.length); }
+  if (focus === 'filter' || focus === 'newpath') { const f = $('#' + focus); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); } }
 }
 
 // ---- 日志 ----
@@ -469,15 +665,15 @@ $('#logbar').addEventListener('click', () => setLog(!document.body.classList.con
 
 async function run(body, confirmText) {
   if (confirmText && !confirm(confirmText)) return;
-  try { await api('/api/run', { app: cur, ...body }); } catch (e) { alert(e.message); }
+  try { await api('/api/run', P({ app: cur, ...body })); } catch (e) { alert(e.message); }
 }
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-app],[data-tab],[data-subtab],[data-run],[data-push],[data-assets],[data-edit],[data-revert],[data-save],[data-cancel],[data-pickall],[data-dismiss],[data-openlog]');
+  const t = e.target.closest('[data-app],[data-tab],[data-subtab],[data-run],[data-push],[data-assets],[data-edit],[data-revert],[data-save],[data-cancel],[data-pickall],[data-dismiss],[data-openlog],[data-login],[data-quit],[data-page],[data-openproj],[data-removeproj],[data-pickfolder],[data-addpath],[data-init],[data-shortcut],[data-savesettings],[data-resetsettings],[data-addapp],[data-delapp],[data-saverules]');
   if (!t) return;
   const a = app();
   const d = t.dataset;
-  if (d.app) { cur = localStorage.appKey = d.app; editing = null; render(); }
+  if (d.app) { cur = localStorage.appKey = d.app; page = 'app'; editing = null; render(); }
   else if (d.tab) { tab = localStorage.tab = d.tab; render(); }
   else if (d.subtab) { subtab = localStorage.subtab = d.subtab; render(); }
   else if (d.run) run({ action: d.run });
@@ -493,24 +689,87 @@ document.addEventListener('click', async (e) => {
   } else if (d.edit) { editing = d.edit; render(); $('#ed')?.focus(); }
   else if (d.cancel !== undefined) { editing = null; render(); }
   else if (d.save) {
-    try { await api('/api/field', { app: cur, key: d.save, value: $('#ed').value }); editing = null; await load(); } catch (err) { alert(err.message); }
+    try { await api('/api/field', P({ app: cur, key: d.save, value: $('#ed').value })); editing = null; await load(); } catch (err) { alert(err.message); }
   } else if (d.revert) {
     const f = allFields(a).find((x) => x.key === d.revert);
     if (confirm(`把“${fieldLabel(a, f.key)}”还原成上次同步时的内容？`)) {
-      try { await api('/api/field', { app: cur, key: f.key, value: f.base }); await load(); } catch (err) { alert(err.message); }
+      try { await api('/api/field', P({ app: cur, key: f.key, value: f.base })); await load(); } catch (err) { alert(err.message); }
     }
   } else if (d.pickall) {
     for (const f of editedFields(a)) setPick(f.key, d.pickall === '1', defPick(f));
     render();
   } else if (d.dismiss) { resultSeen = localStorage.resultSeen = d.dismiss; render(); }
   else if (d.openlog !== undefined) setLog(true);
+  else if (d.login !== undefined) {
+    try { await api('/api/run', { action: 'login', project }); } catch (err) { alert(err.message); }
+  } else if (d.quit !== undefined) {
+    if (!confirm('退出 AutoSteamworks？（下次从桌面快捷方式打开）')) return;
+    await api('/api/quit', {}).catch(() => {});
+    document.body.innerHTML = '<div class="empty-state" style="padding-top:120px">AutoSteamworks 已退出，可以关闭这个页面了。<br><br>下次从桌面的“AutoSteamworks”快捷方式打开。</div>';
+  } else if (d.page) { page = d.page; render(); }
+  else if (d.openproj) { await switchProject(d.openproj); }
+  else if (d.removeproj) {
+    if (!confirm('从列表里移除这个项目？（不会删除任何文件，以后可以再添加）')) return;
+    try { await api('/api/projects/remove', { project: d.removeproj }); await load(); } catch (err) { alert(err.message); }
+  } else if (d.pickfolder !== undefined) {
+    t.disabled = true;
+    try {
+      const r = await api('/api/projects/pick', {});
+      if (r.path) await addProject(r.path);
+    } catch (err) { alert(err.message); } finally { t.disabled = false; }
+  } else if (d.addpath !== undefined) {
+    const v = $('#newpath').value.trim();
+    if (v) await addProject(v);
+  } else if (d.init !== undefined) {
+    const body = { project, name: $('#i-name').value, appid: Number($('#i-appid').value), languages: [...document.querySelectorAll('.i-lang:checked')].map((x) => x.value) };
+    try { await api('/api/projects/init', body); page = 'app'; await load(); } catch (err) { alert(err.message); }
+  } else if (d.shortcut !== undefined) {
+    try { const r = await api('/api/shortcut', {}); alert('已创建快捷方式：\n' + r.made.join('\n')); } catch (err) { alert(err.message); }
+  } else if (d.savesettings !== undefined) {
+    readDraftFromForm();
+    try {
+      await api('/api/settings', { project, settings: { ...draft, apps: draft.apps.map(({ isNew, ...x }) => x) } });
+      draft = null; settingsError = '';
+      await load();
+      alert('已保存');
+    } catch (err) { settingsError = err.message; render(); window.scrollTo(0, 0); }
+  } else if (d.resetsettings !== undefined) { draft = null; render(); }
+  else if (d.addapp !== undefined) { readDraftFromForm(); draft.apps.push({ key: '', name: '', appid: 0, languages: [], screenshotsAllAges: null, isNew: true }); render(); }
+  else if (d.delapp !== undefined) {
+    readDraftFromForm();
+    const x = draft.apps[d.delapp];
+    if (confirm(`删除 App“${x.name || x.key}”？只是不再同步，本地文件不会删。点“保存”后生效。`)) { draft.apps.splice(Number(d.delapp), 1); render(); }
+  } else if (d.saverules !== undefined) {
+    try { await api('/api/rules', { project, text: $('#rules').value }); rules.text = $('#rules').value; rules.exists = true; $('#rules-msg').textContent = '✓ 已保存 ' + new Date().toLocaleTimeString(); } catch (err) { alert(err.message); }
+  }
 });
+
+async function switchProject(config) {
+  project = localStorage.project = config;
+  page = 'app'; cur = null; editing = null; draft = null; rules = null;
+  picked.clear(); unpicked.clear();
+  await load();
+}
+async function addProject(path) {
+  try {
+    const rec = await api('/api/projects/add', { path });
+    await switchProject(rec.config);
+  } catch (err) { alert(err.message); }
+}
 document.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset.pick) { setPick(t.dataset.pick, t.checked, t.dataset.def === '1'); render(); }
   else if (t.id === 'view') { view = localStorage.view = t.value; render(); }
   else if (t.id === 'preview') { showPreview = t.checked; render(); }
+  else if (t.id === 'projsel') switchProject(t.value);
+  else if (t.classList.contains('s-own')) {
+    readDraftFromForm();
+    const x = draft.apps[t.dataset.idx];
+    x.languages = t.checked ? [...draft.languages] : [];
+    render();
+  }
 });
+document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.id === 'newpath') $('[data-addpath]').click(); });
 document.addEventListener('input', (e) => { if (e.target.id === 'filter') { filter = e.target.value; render(); } });
 
 const es = new EventSource('/api/events');
@@ -518,7 +777,7 @@ es.addEventListener('log', (e) => log(JSON.parse(e.data)));
 es.addEventListener('job', (e) => { S.job = JSON.parse(e.data); log(''); setLog(true); render(); });
 es.addEventListener('done', () => { S.job = null; setLog(false); load(); });
 // 编辑中不自动刷新，免得冲掉正在输入的内容
-es.addEventListener('changed', () => { if (!editing) load(); });
+es.addEventListener('changed', () => { if (!editing && !$('#i-name')) load(); });
 
 load().catch((e) => { $('#main').innerHTML = `<div class="empty-state">加载失败：${esc(e.message)}</div>`; });
 </script>

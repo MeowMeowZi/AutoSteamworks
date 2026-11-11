@@ -1,21 +1,25 @@
-// 本地后台网页：查看本地内容和改动，勾选后一键上传。只监听 127.0.0.1。
+// 本地后台网页：管理多个游戏项目，查看本地内容和改动，勾选后一键上传，配置也在网页上改。只监听 127.0.0.1。
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import { diffChars, diffLines } from 'diff';
-import { loadConfig, selectApps, type AppConfig, type Config } from '../config.js';
+import { appHome, loadConfig, selectApps, type AppConfig, type Config } from '../config.js';
 import { openBrowser } from '../browser.js';
 import type { FieldValue } from '../partner/form.js';
-import { hasLocal, norm, readLocal, readSnapshot, splitLocalized, writeLocalField, type Fields } from '../local/storeFiles.js';
+import { hasLocal, norm, readLocal, readSnapshot, splitLocalized, STEAM_LANGS, writeLocalField, type Fields } from '../local/storeFiles.js';
 import { lint } from '../lint.js';
 import type { Change } from '../sync.js';
-import { assetsApp, diffApp, DRAFT_NOTE, pullApp, pushApp, type Log } from '../ops.js';
+import { assetsApp, diffApp, DRAFT_NOTE, loginFlow, pullApp, pushApp, type Log } from '../ops.js';
 import { readMeta } from '../partner/meta.js';
-import { describeField } from '../fieldInfo.js';
+import { describeField, LANG_NAMES } from '../fieldInfo.js';
 import { imageBoard } from './images.js';
+import {
+  addProject, initProject, listProjects, projectSummary, readRules, readSettings, removeProject, requireProject, writeRules, writeSettings,
+} from '../projects.js';
+import { createShortcuts, isWindows, pickFolder } from '../desktop.js';
 
-type Action = 'pull' | 'diff' | 'push' | 'assets';
-interface RunReq { action: Action; app: string; only?: string[]; dryRun?: boolean; force?: boolean }
+type Action = 'pull' | 'diff' | 'push' | 'assets' | 'login';
+interface RunReq { project: string; action: Action; app: string; only?: string[]; dryRun?: boolean; force?: boolean }
 
 const eq = (a?: FieldValue, b?: FieldValue) => (a === undefined || b === undefined ? a === b : norm(a) === norm(b));
 
@@ -38,38 +42,45 @@ function fieldView(key: string, local: Fields, base: Fields | undefined, remote:
   };
 }
 
-export async function startUi(configPath: string, port: number) {
-  /** 最近一次和线上对比的结果，按 App 存 */
+export interface UiOptions {
+  port: number;
+  /** 启动时自动加入并选中的项目（游戏项目文件夹或配置文件） */
+  open?: string;
+  /** 网页上点“退出”时调用 */
+  onQuit?: () => void;
+}
+
+export async function startUi(o: UiOptions) {
+  /** 最近一次和线上对比的结果，按 项目|App 存 */
   const remoteChecks = new Map<string, { at: string; changes: Map<string, Change> }>();
   const clients = new Set<ServerResponse>();
-  let job: { action: Action; app: string; log: string[] } | undefined;
+  let job: { action: Action; project: string; app: string; log: string[] } | undefined;
   /** 上一个任务的结果，网页顶部显示成结果框 */
-  let lastResult: { app: string; action: Action; dryRun: boolean; ok: boolean; at: string; lines: string[] } | undefined;
+  let lastResult: { project: string; app: string; action: Action; dryRun: boolean; ok: boolean; needLogin: boolean; at: string; lines: string[] } | undefined;
 
-  const cfg = (): Config => loadConfig(configPath);
+  const openProject = o.open ? addProject(o.open).config : undefined;
+
   const send = (event: string, data: unknown) => {
     const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const c of clients) c.write(msg);
   };
 
-  const labelsOf = (c: Config, app: AppConfig) => readMeta(c, app)?.labels;
-
-  function appState(c: Config, app: AppConfig) {
+  function appState(c: Config, project: string, app: AppConfig) {
     const pulled = hasLocal(app) && !!readSnapshot(c, app);
     const local = hasLocal(app) ? readLocal(app) : {};
     const base = readSnapshot(c, app);
-    const remote = remoteChecks.get(app.key);
+    const remote = remoteChecks.get(project + '|' + app.key);
+    const meta = readMeta(c, app);
     const common: ReturnType<typeof fieldView>[] = [];
     const byPath = new Map<string, Record<string, ReturnType<typeof fieldView>>>();
     for (const key of Object.keys(local).sort()) {
-      const v = fieldView(key, local, base, remote?.changes, labelsOf(c, app));
+      const v = fieldView(key, local, base, remote?.changes, meta?.labels);
       const loc = splitLocalized(key);
       if (!loc) { common.push(v); continue; }
       const row = byPath.get(loc.path) ?? {};
       row[loc.lang] = v;
       byPath.set(loc.path, row);
     }
-    const meta = readMeta(c, app);
     const images = imageBoard(c, app, meta);
     const issues = lint(app, local);
     const edits = Object.keys(local).filter((k) => base && !eq(local[k], base[k]));
@@ -87,58 +98,86 @@ export async function startUi(configPath: string, port: number) {
         errors: issues.filter((i) => i.level === 'error').length + images.issues.filter((i) => i.level === 'error').length,
         warnings: issues.filter((i) => i.level === 'warn').length + images.issues.filter((i) => i.level === 'warn').length,
       },
-      lint: lint(app, local),
+      lint: issues,
       remoteCheckedAt: remote?.at,
       /** 线上有、但本地没改的变化（本地改了的已经挂在字段上） */
       remoteOnly: remote ? [...remote.changes.values()].filter((ch) => ch.kind === 'remote').map((ch) => ch.key) : [],
     };
   }
 
-  function state() {
-    const c = cfg();
-    return { config: resolve(configPath), job: job && { action: job.action, app: job.app }, lastResult, apps: c.apps.map((a) => appState(c, a)) };
+  function state(project: string | null) {
+    const projects = listProjects().map(projectSummary);
+    let current: unknown = null;
+    if (project) {
+      const config = requireProject(project);
+      const sum = projects.find((p) => p.config === config)!;
+      let apps: unknown[] = [], error = sum.error;
+      if (sum.configured && !error) {
+        try {
+          const c = loadConfig(config);
+          apps = c.apps.map((a) => appState(c, config, a));
+        } catch (e) { error = e instanceof Error ? e.message : String(e); }
+      }
+      current = { ...sum, error, apps };
+    }
+    return {
+      projects, current, openProject, job: job && { action: job.action, project: job.project, app: job.app }, lastResult,
+      windows: isWindows, langs: STEAM_LANGS.map((l) => ({ id: l, name: LANG_NAMES[l] ?? l })),
+    };
   }
 
   async function run(req: RunReq) {
-    const c = cfg();
-    const [app] = selectApps(c, [req.app]);
-    job = { action: req.action, app: app.key, log: [] };
+    const project = req.action === 'login' && !req.project ? '' : requireProject(req.project);
+    // 登录不需要项目配置好：没配置时用默认的共用登录目录
+    const c: Config = project && existsSync(project) ? loadConfig(project) : { profileDir: join(appHome(), 'profile'), browserChannel: 'msedge' } as Config;
+    const app = req.action === 'login' ? undefined : selectApps(c, [req.app])[0];
+    job = { action: req.action, project, app: app?.key ?? '', log: [] };
     const log: Log = (line) => { job!.log.push(line); send('log', line); };
-    send('job', { action: req.action, app: app.key });
+    send('job', { action: req.action, project, app: app?.key });
     let ok = true;
-    const { ctx, page } = await openBrowser(c, true);
     try {
-      log(`■ ${app.key} (${app.appid}) ${({ pull: '拉取', diff: '和线上对比', push: '上传文本', assets: '上传图片' })[req.action]}${req.dryRun ? '（演练）' : ''}`);
-      if (req.action === 'pull') {
-        ok = await pullApp(page, c, app, { force: req.force }, log);
-        if (ok) remoteChecks.delete(app.key);
-      } else if (req.action === 'diff') {
-        const changes = await diffApp(page, c, app);
-        if (!changes) { log('  尚未 pull'); ok = false; }
-        else {
-          remoteChecks.set(app.key, { at: new Date().toISOString(), changes: new Map(changes.map((ch) => [ch.key, ch])) });
-          const n = (k: string) => changes.filter((ch) => ch.kind === k).length;
-          log(changes.length ? `  本地改动 ${n('local')}，线上改动 ${n('remote')}，冲突 ${n('conflict')}，线上已删除 ${n('gone')}` : '  ✓ 已同步');
-        }
+      if (req.action === 'login') {
+        ok = await loginFlow(c, log);
       } else {
-        const r = req.action === 'push'
-          ? await pushApp(page, c, app, { dryRun: req.dryRun, force: req.force, only: req.only }, log)
-          : await assetsApp(page, c, app, { dryRun: req.dryRun, force: req.force, only: req.only }, log);
-        ok = !r.failed;
-        if (r.pushed) {
-          log(DRAFT_NOTE);
-          remoteChecks.delete(app.key); // 线上变了，旧的对比结果作废
+        const { ctx, page } = await openBrowser(c, true);
+        try {
+          log(`■ ${app!.key} (${app!.appid}) ${({ pull: '拉取', diff: '刷新后台状态', push: '上传文本', assets: '上传图片' })[req.action]}${req.dryRun ? '（演练）' : ''}`);
+          const rk = project + '|' + app!.key;
+          if (req.action === 'pull') {
+            ok = await pullApp(page, c, app!, { force: req.force }, log);
+            if (ok) remoteChecks.delete(rk);
+          } else if (req.action === 'diff') {
+            const changes = await diffApp(page, c, app!);
+            if (!changes) { log('  尚未从后台拉取过，已读取后台的图片状态。拉取后才能对比文本。'); }
+            else {
+              remoteChecks.set(rk, { at: new Date().toISOString(), changes: new Map(changes.map((ch) => [ch.key, ch])) });
+              const n = (k: string) => changes.filter((ch) => ch.kind === k).length;
+              log(changes.length ? `  本地改动 ${n('local')}，后台被改过 ${n('remote')}，冲突 ${n('conflict')}，后台已删除 ${n('gone')}` : '  ✓ 文本和后台一致');
+            }
+          } else {
+            const r = req.action === 'push'
+              ? await pushApp(page, c, app!, { dryRun: req.dryRun, force: req.force, only: req.only }, log)
+              : await assetsApp(page, c, app!, { dryRun: req.dryRun, force: req.force, only: req.only }, log);
+            ok = !r.failed;
+            if (r.pushed) {
+              log(DRAFT_NOTE);
+              remoteChecks.delete(rk); // 线上变了，旧的对比结果作废
+            }
+          }
+        } finally {
+          await ctx.close().catch(() => {});
         }
       }
     } catch (e) {
       ok = false;
       log(`错误: ${e instanceof Error ? e.message : e}`);
     } finally {
-      await ctx.close().catch(() => {});
+      const lines = job!.log.map((l) => l.trim());
       lastResult = {
-        app: app.key, action: req.action, dryRun: !!req.dryRun, ok, at: new Date().toISOString(),
+        project, app: app?.key ?? '', action: req.action, dryRun: !!req.dryRun, ok, at: new Date().toISOString(),
+        needLogin: lines.some((l) => /未登录或已过期/.test(l)),
         // 只保留结果行：成功、失败、警告、后台位置、提醒
-        lines: job!.log.map((l) => l.trim()).filter((l) => /^(✓|✗|⚠|→|后台位置|提醒|错误|跳过|没有需要|本地改动|尚未)/.test(l)),
+        lines: lines.filter((l) => /^(✓|✗|⚠|→|后台位置|提醒|错误|跳过|没有需要|本地改动|尚未)/.test(l)),
       };
       job = undefined;
       send('done', { ok });
@@ -148,24 +187,29 @@ export async function startUi(configPath: string, port: number) {
 
   // 本地文件变了（AI 或编辑器改的）就通知网页刷新。文件不多，直接轮询 mtime
   const signature = () => {
-    try {
-      const c = cfg();
-      const parts: string[] = [String(statSync(resolve(configPath)).mtimeMs)];
-      const walk = (p: string) => {
-        if (!existsSync(p)) return;
-        const s = statSync(p);
-        if (!s.isDirectory()) { parts.push(p + s.mtimeMs + ':' + s.size); return; }
-        for (const f of readdirSync(p)) walk(join(p, f));
-      };
-      for (const a of c.apps) {
-        walk(a.storeDir); walk(a.assets.dir);
-        walk(join(c.stateDir, 'snapshots', a.key + '.json'));
-        walk(join(c.stateDir, 'assets', a.key + '.json'));
+    const parts: string[] = [];
+    const walk = (p: string) => {
+      if (!existsSync(p)) return;
+      const s = statSync(p);
+      if (!s.isDirectory()) { parts.push(p + s.mtimeMs + ':' + s.size); return; }
+      for (const f of readdirSync(p)) walk(join(p, f));
+    };
+    walk(join(appHome(), 'projects.json'));
+    for (const { config } of listProjects()) {
+      try {
+        walk(config);
+        walk(join(config, '..', 'STEAM_RULES.md'));
+        if (!existsSync(config)) continue;
+        const c = loadConfig(config);
+        for (const a of c.apps) {
+          walk(a.storeDir); walk(a.assets.dir);
+          for (const d of ['snapshots', 'assets', 'remote']) walk(join(c.stateDir, d, a.key + '.json'));
+        }
+      } catch (e) {
+        parts.push('error:' + e);
       }
-      return parts.join('|');
-    } catch (e) {
-      return 'error:' + e;
     }
+    return parts.join('|');
   };
   let lastSig = signature();
   const timer = setInterval(() => {
@@ -173,6 +217,7 @@ export async function startUi(configPath: string, port: number) {
     const s = signature();
     if (s !== lastSig) { lastSig = s; send('changed', null); }
   }, 1000);
+  const touched = () => { lastSig = signature(); send('changed', null); };
 
   const json = (res: ServerResponse, code: number, body: unknown) => {
     res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
@@ -183,52 +228,103 @@ export async function startUi(configPath: string, port: number) {
     for await (const ch of req) chunks.push(ch as Buffer);
     return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
   };
+  const appOf = (project: unknown, key: unknown) => {
+    const c = loadConfig(requireProject(String(project ?? '')));
+    return { c, app: selectApps(c, [String(key ?? '')])[0] };
+  };
 
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
+      const q = (k: string) => url.searchParams.get(k);
       const origin = `http://${req.headers.host}`;
       // 只接受本机地址访问，防止其他网页通过 DNS 重绑定调用这里的接口
       if (!/^(127\.0\.0\.1|localhost):\d+$/.test(req.headers.host ?? '')) return json(res, 403, { error: 'forbidden host' });
       if (req.method === 'POST' && req.headers.origin !== origin) return json(res, 403, { error: 'forbidden origin' });
+      const route = `${req.method} ${url.pathname}`;
 
-      if (req.method === 'GET' && url.pathname === '/') {
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        return res.end(readFileSync(join(import.meta.dirname, 'page.html')));
+      switch (route) {
+        case 'GET /':
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+          return res.end(readFileSync(join(import.meta.dirname, 'page.html')));
+        case 'GET /favicon.ico':
+          res.writeHead(204).end();
+          return;
+        case 'GET /api/ping':
+          return json(res, 200, { app: 'autosteamworks' });
+        case 'GET /api/state':
+          return json(res, 200, state(q('project')));
+        case 'GET /api/events':
+          res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+          res.write(': hi\n\n');
+          clients.add(res);
+          req.on('close', () => clients.delete(res));
+          return;
+        case 'GET /api/asset': {
+          const { app } = appOf(q('project'), q('app'));
+          const root = resolve(app.assets.dir);
+          const p = resolve(root, q('rel') ?? '');
+          if (!p.startsWith(root + sep) || !existsSync(p)) return json(res, 404, { error: 'not found' });
+          const mime: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+          res.writeHead(200, { 'content-type': mime[extname(p).toLowerCase()] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
+          return res.end(readFileSync(p));
+        }
+        case 'GET /api/settings':
+          return json(res, 200, readSettings(requireProject(q('project'))));
+        case 'GET /api/rules':
+          return json(res, 200, readRules(requireProject(q('project'))));
       }
-      if (req.method === 'GET' && url.pathname === '/api/state') return json(res, 200, state());
-      if (req.method === 'GET' && url.pathname === '/api/events') {
-        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-        res.write(': hi\n\n');
-        clients.add(res);
-        req.on('close', () => clients.delete(res));
-        return;
-      }
-      if (req.method === 'GET' && url.pathname === '/api/asset') {
-        const [app] = selectApps(cfg(), [url.searchParams.get('app') ?? '']);
-        const root = resolve(app.assets.dir);
-        const p = resolve(root, url.searchParams.get('rel') ?? '');
-        if (!p.startsWith(root + sep) || !existsSync(p)) return json(res, 404, { error: 'not found' });
-        const mime: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
-        res.writeHead(200, { 'content-type': mime[extname(p).toLowerCase()] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
-        return res.end(readFileSync(p));
-      }
-      if (req.method === 'POST' && url.pathname === '/api/field') {
-        const b = await readBody(req);
-        const [app] = selectApps(cfg(), [b.app]);
-        if (typeof b.value !== 'string' && typeof b.value !== 'boolean') return json(res, 400, { error: 'value 必须是字符串或布尔值' });
-        writeLocalField(app, b.key, b.value);
-        lastSig = signature();
-        send('changed', null);
-        return json(res, 200, { ok: true });
-      }
-      if (req.method === 'POST' && url.pathname === '/api/run') {
-        const b = (await readBody(req)) as RunReq;
-        if (!['pull', 'diff', 'push', 'assets'].includes(b.action)) return json(res, 400, { error: '未知操作' });
-        if (job) return json(res, 409, { error: `正在执行 ${job.action}（${job.app}），请等它结束` });
-        selectApps(cfg(), [b.app]); // 先校验 App 名
-        void run(b);
-        return json(res, 202, { ok: true });
+
+      if (req.method !== 'POST') return json(res, 404, { error: 'not found' });
+      const b = await readBody(req);
+      switch (url.pathname) {
+        case '/api/projects/pick':
+          return json(res, 200, { path: (await pickFolder()) ?? null });
+        case '/api/projects/add': {
+          const rec = addProject(String(b.path ?? ''));
+          touched();
+          return json(res, 200, rec);
+        }
+        case '/api/projects/remove':
+          removeProject(requireProject(b.project));
+          touched();
+          return json(res, 200, { ok: true });
+        case '/api/projects/init': {
+          const made = initProject(requireProject(b.project), { name: b.name, appid: b.appid, languages: b.languages, key: b.key });
+          touched();
+          return json(res, 200, { made });
+        }
+        case '/api/settings':
+          writeSettings(requireProject(b.project), b.settings);
+          touched();
+          return json(res, 200, { ok: true });
+        case '/api/rules':
+          if (typeof b.text !== 'string') return json(res, 400, { error: 'text 必须是字符串' });
+          writeRules(requireProject(b.project), b.text);
+          touched();
+          return json(res, 200, { ok: true });
+        case '/api/field': {
+          const { app } = appOf(b.project, b.app);
+          if (typeof b.value !== 'string' && typeof b.value !== 'boolean') return json(res, 400, { error: 'value 必须是字符串或布尔值' });
+          writeLocalField(app, b.key, b.value);
+          touched();
+          return json(res, 200, { ok: true });
+        }
+        case '/api/run': {
+          const r = b as RunReq;
+          if (!['pull', 'diff', 'push', 'assets', 'login'].includes(r.action)) return json(res, 400, { error: '未知操作' });
+          if (job) return json(res, 409, { error: `正在执行 ${job.action}，请等它结束` });
+          if (r.action !== 'login') appOf(r.project, r.app); // 先校验项目和 App
+          else if (r.project) requireProject(r.project);
+          void run(r);
+          return json(res, 202, { ok: true });
+        }
+        case '/api/shortcut':
+          return json(res, 200, { made: await createShortcuts() });
+        case '/api/quit':
+          json(res, 200, { ok: true });
+          setTimeout(() => o.onQuit?.(), 200);
+          return;
       }
       json(res, 404, { error: 'not found' });
     } catch (e) {
@@ -238,10 +334,10 @@ export async function startUi(configPath: string, port: number) {
 
   await new Promise<void>((ok, fail) => {
     server.once('error', fail);
-    server.listen(port, '127.0.0.1', ok);
+    server.listen(o.port, '127.0.0.1', ok);
   });
   const addr = server.address();
-  const url = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : port}/`;
+  const url = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : o.port}/`;
   return {
     url,
     close: () => {

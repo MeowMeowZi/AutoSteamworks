@@ -6,36 +6,44 @@ Steamworks **没有**修改商店页面的官方 API。这个工具通过浏览�
 
 ## 快速开始
 
-安装一次，之后在任何游戏项目里都能用 `autosw` 命令：
+**安装（Windows）**：打开 PowerShell，运行这一行：
 
 ```powershell
-npm i -g github:MeowMeowZi/AutoSteamworks    # 更新时再运行一次同样的命令
+irm https://raw.githubusercontent.com/MeowMeowZi/AutoSteamworks/main/install.ps1 | iex
 ```
 
-在游戏项目的根目录：
+它会检查 Node.js（没有就用 winget 装）、安装 AutoSteamworks，并在桌面和开始菜单创建“AutoSteamworks”快捷方式。以后再运行一次就是更新。
+
+**使用**：双击桌面上的“AutoSteamworks”，浏览器里会打开后台网页，之后全部在网页上操作：
+
+1. **添加游戏项目**：点“选择文件夹…”，选游戏工程的文件夹。第一次会让你填游戏名称、App ID 和要同步的语言。
+2. **登录 Steam**：点右上角“登录 Steam”，在弹出的浏览器里登录 Steamworks（包括 Steam Guard）。所有项目共用这个登录，只需要一次。
+3. **从后台拉取**：把商店页内容下载到本地。
+4. 修改文本和图片（在网页上改，或者让 AI 按 STEAM_RULES.md 改），看完差异后勾选上传。
+
+项目的配置（App、语言、截图年龄声明等）在网页的“设置”里改，给 AI 的规则在“AI 规则”里改。网页右上角的“退出”会停止后台；再双击快捷方式就会重新打开（已经在运行时直接打开现有的页面）。
+
+### 命令行（可选）
+
+所有操作也都能用命令行完成，适合自动化或者在游戏项目目录里直接用：
 
 ```powershell
+autosw               # 等同于 autosw ui：打开后台网页；当前目录是游戏项目时自动打开它
 autosw init          # 生成 steam.config.yaml、STEAM_RULES.md，并把 .autosw/ 加进 .gitignore
-autosw login         # 弹出 Edge，手动登录一次（包括 Steam Guard）；所有项目共用这个登录
-autosw pull          # 把所有 App、所有语言的商店内容拉到 apps/<key>/store/<lang>/
-autosw ui            # 打开本地后台网页，看内容、看改动、勾选上传
-```
-
-命令行也能完成全部操作：
-
-```powershell
+autosw login         # 登录 Steamworks
+autosw pull          # 拉取商店内容
 autosw status        # 离线查看改了什么
 autosw check         # 离线按规则检查
 autosw diff          # 和线上做三方对比（本地 / 线上 / 上次同步）
 autosw push -n       # 先演练一遍
 autosw push          # 保存到后台（不会自动发布）
-autosw assets -n     # 看看 apps/<key>/assets 里的图片会被识别成什么
 autosw assets        # 上传新增或改过的图片
 autosw build game    # 用 steamcmd 上传构建
+autosw shortcut      # 重新创建桌面和开始菜单快捷方式
 ```
 
 - 用 `-c path/to/steam.config.yaml` 指定别处的配置；内容和状态目录都相对于配置文件。
-- 登录信息默认存在 `~/.autosteamworks/profile`，所有项目共用。项目里已经有旧的 `.autosw/profile` 时继续用它；也可以在配置里用 `browser.profileDir` 指定。
+- 登录信息和项目列表存在 `~/.autosteamworks/`。项目里已经有旧的 `.autosw/profile` 时继续用它；也可以在配置里用 `browser.profileDir` 指定。
 - 在这个仓库里开发时，用 `npm i --include=dev` 安装依赖（本机设置了 `NODE_ENV=production`），然后用 `npm run autosw -- <命令>`。
 
 ## 后台网页和 AI 修改

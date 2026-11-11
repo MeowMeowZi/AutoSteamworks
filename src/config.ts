@@ -60,6 +60,9 @@ export interface Config {
   apps: AppConfig[];
 }
 
+/** 工具自己的全局目录（项目列表、共用的登录信息）。测试时用 AUTOSW_HOME 指到临时目录 */
+export const appHome = () => process.env.AUTOSW_HOME ?? join(homedir(), '.autosteamworks');
+
 export const DEFAULT_STORE_EDIT_URL = 'https://partner.steamgames.com/admin/game/editbyappid/{appid}';
 export const DEFAULT_STORE_FILES = ['about', 'short_description', 'legal', 'earlyaccess.*', 'sections.*.content'];
 
@@ -106,7 +109,7 @@ export function loadConfig(path = 'steam.config.yaml'): Config {
   // 默认所有游戏项目共用一个登录（同一个 Steamworks 账号）；项目里已有旧的 profile 时继续用它
   const legacyProfile = join(stateDir, 'profile');
   const profileDir = raw.browser?.profileDir ? abs(raw.browser.profileDir)
-    : existsSync(legacyProfile) ? legacyProfile : join(homedir(), '.autosteamworks', 'profile');
+    : existsSync(legacyProfile) ? legacyProfile : join(appHome(), 'profile');
   return {
     root,
     stateDir,
