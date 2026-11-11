@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import YAML from 'yaml';
@@ -44,6 +44,8 @@ export interface AppConfig {
 }
 
 export interface Config {
+  /** 配置文件的绝对路径 */
+  file: string;
   root: string;
   stateDir: string;
   /** 浏览器配置文件目录（里面有登录 Cookie） */
@@ -111,6 +113,7 @@ export function loadConfig(path = 'steam.config.yaml'): Config {
   const profileDir = raw.browser?.profileDir ? abs(raw.browser.profileDir)
     : existsSync(legacyProfile) ? legacyProfile : join(appHome(), 'profile');
   return {
+    file,
     root,
     stateDir,
     profileDir,
@@ -135,4 +138,20 @@ export function selectApps(cfg: Config, keys: string[]): AppConfig[] {
 
 export function globToRegex(glob: string) {
   return new RegExp('^' + glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
+}
+
+/**
+ * 往某个 App 的同步语言里追加语言（拉取时发现后台勾选了本地没同步的语言）。用 YAML Document 修改，保留注释。
+ * App 自己写了 languages 就加到它那里；没写时，项目只有这一个 App 就加到顶层 languages，
+ * 否则给这个 App 单独写一份（免得影响试玩版、DLC 等其他 App）。
+ */
+export function addAppLanguages(file: string, appKey: string, add: string[]) {
+  const doc = YAML.parseDocument(readFileSync(file, 'utf8'));
+  const raw = doc.toJS() ?? {};
+  const own: string[] | undefined = raw.apps?.[appKey]?.languages;
+  const top: string[] = raw.languages ?? ['english'];
+  if (own) doc.setIn(['apps', appKey, 'languages'], [...own, ...add.filter((l) => !own.includes(l))]);
+  else if (Object.keys(raw.apps ?? {}).length <= 1) doc.set('languages', [...top, ...add.filter((l) => !top.includes(l))]);
+  else doc.setIn(['apps', appKey, 'languages'], [...top, ...add.filter((l) => !top.includes(l))]);
+  writeFileSync(file, doc.toString({ lineWidth: 0 }));
 }

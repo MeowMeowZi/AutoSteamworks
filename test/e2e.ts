@@ -85,6 +85,21 @@ try {
   await cli('push', 'game', '--force');
   assert.equal(remote()['app[content][short_description][english]'], 'Local edit');
   assert.equal(remote()['app[content][links][website]'], 'https://example.com', '线上的其他改动不被回滚');
+
+  // 后台“支持的语言”里勾了本地没同步的语言：拉取时加进配置并一起拉下来
+  remote()['app[content][supported_languages][japanese][supported]'] = 'true';
+  remote()['app[content][supported_languages][afrikaans][supported]'] = 'true'; // 没有商店文本的语言，忽略
+  remote()['app[content][supported_languages][schinese][supported]'] = 'true';  // 已经在同步
+  srv.db['1200']['app[content][supported_languages][japanese][supported]'] = 'true';
+  const pl = await cli('pull'); console.log(pl);
+  assert.match(pl, /后台勾选了 日语/);
+  const cfg = yaml(join(ws, 'steam.config.yaml'));
+  assert.deepEqual(cfg.languages, ['english', 'schinese'], '有多个 App 时不改顶层语言');
+  assert.deepEqual(cfg.apps.game.languages, ['english', 'schinese', 'japanese'], '没单独设置的 App：写一份自己的语言');
+  assert.deepEqual(cfg.apps.demo.languages, ['english', 'japanese'], '单独设置过的 App：追加到自己的列表');
+  assert.ok(existsSync(join(g, 'japanese', 'about.bbcode')), '新语言的文本拉到本地');
+  assert.ok(existsSync(join(dir('demo'), 'japanese')));
+  assert.doesNotMatch(await cli('pull'), /后台勾选了/, '第二次拉取不再重复添加');
   ok = true;
   console.log('\n✓ 全部通过');
 } finally {

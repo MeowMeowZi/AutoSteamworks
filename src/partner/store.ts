@@ -2,7 +2,7 @@ import type { Page } from 'playwright-core';
 import { globToRegex, type AppConfig, type Config } from '../config.js';
 import { gotoPartner, sleep } from '../browser.js';
 import { applyFields, postForm, readFields, type FieldInfo, type FieldValue } from './form.js';
-import { keepLanguages, norm, type Fields } from '../local/storeFiles.js';
+import { keepLanguages, norm, STEAM_LANGS, type Fields } from '../local/storeFiles.js';
 
 /** 页面内部用的字段，同步它们没有意义（或者会出问题） */
 export const BUILTIN_IGNORE = [
@@ -26,9 +26,27 @@ export async function loadStorePage(page: Page, cfg: Config, app: AppConfig): Pr
   return filterIgnored(app, await readFields(page, cfg.formSelector));
 }
 
-export async function fetchRemote(page: Page, cfg: Config, app: AppConfig): Promise<Fields> {
+/** 读后台所有字段，不按语言过滤 */
+export async function fetchRemoteAll(page: Page, cfg: Config, app: AppConfig): Promise<Fields> {
   const info = await loadStorePage(page, cfg, app);
-  return keepLanguages(app, Object.fromEntries(info.map((f) => [f.key, f.value])));
+  return Object.fromEntries(info.map((f) => [f.key, f.value]));
+}
+
+export async function fetchRemote(page: Page, cfg: Config, app: AppConfig): Promise<Fields> {
+  return keepLanguages(app, await fetchRemoteAll(page, cfg, app));
+}
+
+/**
+ * 后台“支持的语言”表里勾了“界面”的语言（app[content][supported_languages][<语言>][supported]）。
+ * 只返回有商店文本的语言（STEAM_LANGS）；后台表里还有很多只能标注支持、没有商店页文本的语言，忽略。
+ */
+export function supportedLanguages(fields: Fields): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(fields)) {
+    const m = k.match(/^app\[content\]\[supported_languages\]\[([a-z_]+)\]\[supported\]$/);
+    if (m && (v === true || v === 'true' || v === '1') && STEAM_LANGS.includes(m[1])) out.push(m[1]);
+  }
+  return STEAM_LANGS.filter((l) => out.includes(l));
 }
 
 export interface PushResult {

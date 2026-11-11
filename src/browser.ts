@@ -23,6 +23,15 @@ export function isLoginPage(url: string) {
   return /\/login/i.test(url);
 }
 
+/** 没登录（或没权限）时，Steamworks 会跳回首页并带上 ?goto=<原地址> */
+export function isGotoRedirect(url: string) {
+  try {
+    return new URL(url).searchParams.has('goto');
+  } catch {
+    return false;
+  }
+}
+
 /** Steamworks 的编辑页会保持长连接，networkidle 永远等不到；所以等 load 之后再尽量等网络空闲 */
 export async function settle(page: Page) {
   await page.waitForLoadState('load');
@@ -32,8 +41,13 @@ export async function settle(page: Page) {
 export async function gotoPartner(page: Page, url: string) {
   await page.goto(url, { waitUntil: 'load' });
   await settle(page);
-  if (isLoginPage(page.url())) {
-    throw new Error('Steamworks 会话未登录或已过期，请先运行 `npm run autosw -- login`');
+  const now = page.url();
+  if (isLoginPage(now) || isGotoRedirect(now)) {
+    if (!(await hasLoginCookie(page.context()))) {
+      throw new Error('Steamworks 还没登录或登录已过期：请在网页上点“登录”（命令行是 `autosw login`），登录后再试');
+    }
+    throw new Error(`已登录，但后台把请求跳回了首页（${now}）：当前账号可能没有这个 App 的权限，`
+      + '或者 App 属于另一个机构——请在 Steamworks 里切换到对应的机构后再试');
   }
 }
 

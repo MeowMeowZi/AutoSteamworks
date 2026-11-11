@@ -17,7 +17,11 @@ Steamworks **没有**修改商店页面的官方 API，所以一切都靠操作�
 | `ui`：本地后台网页（查看、编辑、规则检查、勾选上传）+ `check`（离线规则检查） | ✅ 模拟后台测试通过；在真实项目上打开过页面（只读），还没在网页上真实上传过 |
 | 打包：`npm i -g github:MeowMeowZi/AutoSteamworks` 后在任何目录用 `autosw` | ✅ 用 npm pack + 全局安装到临时目录（omit=dev）验证过 init / help / ui |
 | 启动项 + 网页里管理一切：`install.ps1` 一键安装并创建快捷方式；网页上添加项目、初始化、设置、AI 规则、登录、退出 | ✅ 模拟后台测试 + 沙盒里用 Edge 点过完整流程；快捷方式在临时目录验证过；install.ps1 只做了语法检查，还没在干净的机器上跑过 |
+| 按 App ID 添加项目：网页“项目”页只填 App ID（名称可选），自动在 `~/AutoSteamworks/<appid> <名称>/` 建文件夹并初始化（语言默认 english + schinese）；同一个 appid 已有项目时直接打开。接口 `POST /api/projects/create`，位置可用 `AUTOSW_PROJECTS` 覆盖（测试时在 `AUTOSW_HOME/projects`） | ✅ 网页接口测试通过 |
 | AI 规则：`templates/STEAM_RULES.md` 是给游戏项目里的 AI 用的完整手册（工作流程、配置说明、字段对照、Steam 规则）；网页“AI 规则”页的“复制给 AI”会生成“项目现状 + 规则全文”；规则文件是旧版时可以一键升级（保留“本项目的风格”一节）；初始化时在游戏项目的 CLAUDE.md（以及已有的 AGENTS.md）里加上指向规则文件的说明 | ✅ 模拟测试通过；还没在真实游戏项目里让 AI 照着跑过 |
+| 图片收件箱：图片丢进 `assets/待分类/`，按尺寸判断位置、按文件名判断语言（没写算 english；920x430 文件名带 library/库 才算库形象图片），网页上点“整理”或 `sort-images [-n]`；同位置旧图挪到 `assets/已替换/`。网页上可以直接拖拽：拖到空白处 = 放进待分类并自动整理，拖到表格某一格 = 直接放到那个位置和语言（尺寸不符拒绝）；也有“选择图片…”按钮。接口 `POST /api/images/drop`，请求体就是文件 | ✅ 离线测试 + 网页接口测试通过；拖拽事件在无头 Edge 里实测过 |
+| 拉取时跟随后台语言：后台“支持的语言”里勾了“界面”、且有商店文本的语言（STEAM_LANGS），拉取时自动加进 steam.config.yaml 并一起拉下来（App 有自己的 languages 就加到那里；项目只有一个 App 时加到顶层；否则给这个 App 单独写一份）。只加不删 | ✅ 模拟后台测试通过；真实后台还没跑过 |
+| 未登录检测：后台把请求跳回首页（`/?goto=...`）时，没有 `steamLoginSecure` 就提示登录，有就提示可能没权限 / 机构不对 | ✅ 真实后台遇到过（新项目用的共享登录还没登录） |
 | `build`：生成 VDF + 调用 steamcmd | ⚠ 已实现但从未真实运行；配置里 `steamcmd.user` 还是占位值，`builds/windows` 目录也不存在 |
 | `push --publish`：发布 | ⏳ 未做，发布页面还没探查过 |
 | 成就 | ⏳ 未做（后台地址 `https://partner.steamgames.com/apps/achievements/5596340`） |
@@ -66,6 +70,7 @@ src/partner/form.ts        通用表单读写（按 name 定位；hidden/radio/c
 src/partner/store.ts       商店页拉取/推送；BUILTIN_IGNORE 里是内部字段
 src/partner/assets.ts      图片上传 + 上传后核对
 src/local/storeFiles.ts    本地布局：_common.yaml + <语言>/*.bbcode + <语言>/_fields.yaml；快照
+src/local/inbox.ts         “待分类”收件箱：计划（planInbox）和整理（sortInbox），语言线索（langHints）
 src/local/assetFiles.ts    扫描 assets/{store,library}/<语言>/、assets/screenshots/；上传记录（sha256）
 src/ops.ts                 pull / diff / push / assets 的核心流程，命令行和网页共用（输出走 log 回调）
 src/lint.ts                规则检查（简短描述长度、BBCode 闭合、未翻译）
@@ -83,6 +88,7 @@ test/mock-partner.ts       模拟后台，按真实页面结构还原
 test/e2e.ts                商店文本端到端测试
 test/assets-e2e.ts         图片端到端测试
 test/ui-e2e.ts             网页接口端到端测试（在进程内启动 startUi）
+test/inbox-test.ts         收件箱整理测试（离线）
 test/png.ts                测试用的 PNG 生成
 scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-assets、probe-assets2、probe-uploaded、probe-delete、probe-delete2）
 ```
@@ -97,7 +103,7 @@ scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-
 
 - **先只读探查，再写代码**：遇到新的后台页面，先写 `scripts/` 下的只读脚本，看 DOM、全局变量、后台的 JS，必要时用 curl 下载 `public/javascript/*.js` 到临时目录用 grep 读。不要靠猜。
 - **第一次真实写入前要征得用户同意**：先 `--dry-run`，再真正执行，写完后要从后台核对结果。保存的都是草稿，不点发布就不会上线。
-- **每个功能都要有模拟后台的端到端测试**：`npm test` 跑三套测试。注意测试必须异步调用 CLI，因为模拟服务器在同一个进程里，同步调用会把它卡死。
+- **每个功能都要有模拟后台的端到端测试**：`npm test` 跑四套测试。注意测试必须异步调用 CLI，因为模拟服务器在同一个进程里，同步调用会把它卡死。
 - **测试配置必须写 `browser.profileDir`**（指向临时目录），否则会用到真实的共享登录；网页测试还要设 `AUTOSW_HOME` 到临时目录，否则会改到真实的项目列表。
 - **网页接口都带 project 参数**（配置文件路径），服务器只接受项目列表里的路径。同一时间只跑一个任务（共用一个浏览器配置文件）。
 - **在 Bash 里用 heredoc / sed 写含反斜杠的代码很容易被吃掉**：这类修改用 Write 写 .autosw/ 下的临时 python 脚本再运行，或者直接用 Edit。
@@ -105,6 +111,7 @@ scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-
 - **规则检查只写确认过的规则**：简短描述的 200-300 是 2026-11-11 从真实编辑页的脚本里读到的（按 JS `.length` 计数，超过 300 只是标红，不阻止保存）。新增规则前先探查。
 - **用户的使用方式**：这个工具以后会放进其他准备上架的游戏项目里用。网页负责查看和上传；AI（Claude Code）按游戏项目里的 `STEAM_RULES.md` 改本地文件，不直接上传。
 - **用户的环境**：`NODE_ENV=production` 且 npm `omit=dev`，安装依赖要用 `npm i --include=dev`。TypeScript 7 需要在 tsconfig 里显式写 `"types": ["node"]`。
+- **网页上和语言无关的字段**（page.html 的 renderCommon）：支持语言画成“语言 × 界面/完全音频/字幕”表；功能、类型、平台、向导类复选框画成标签；其余一行一个，字段名放在鼠标悬停提示里；存储空间/内存的数值和单位合成一行。改网页后用无头 Edge 截图检查（脚本放 `.autosw/` 下，在进程内 `startUi`，只做 GET）。
 - **在浏览器里执行的代码写成字符串**传给 `page.evaluate`，避免 tsx 往函数里注入 `__name`。
 - **和用户用中文交流**，代码注释和 CLI 输出也用中文。
 

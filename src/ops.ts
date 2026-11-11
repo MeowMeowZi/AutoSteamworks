@@ -1,11 +1,11 @@
 // 命令行和网页共用的同步操作。输出都通过 log 回调，命令行打到终端，网页推送到浏览器。
 import { createTwoFilesPatch } from 'diff';
 import type { Page } from 'playwright-core';
-import type { AppConfig, Config } from './config.js';
+import { addAppLanguages, type AppConfig, type Config } from './config.js';
 import { hasLoginCookie, isLoginPage, openBrowser, PARTNER_HOME, sleep } from './browser.js';
 import type { FieldValue } from './partner/form.js';
-import { fetchRemote, pushStore } from './partner/store.js';
-import { hasLocal, readLocal, readSnapshot, splitLocalized, writeLocal, writeSnapshot } from './local/storeFiles.js';
+import { fetchRemote, fetchRemoteAll, pushStore, supportedLanguages } from './partner/store.js';
+import { hasLocal, keepLanguages, readLocal, readSnapshot, splitLocalized, writeLocal, writeSnapshot } from './local/storeFiles.js';
 import { localEdits, threeWay, type Change } from './sync.js';
 import { deleteAssets, openAssetsPage, uploadAssets } from './partner/assets.js';
 import { saveRemoteMeta } from './partner/meta.js';
@@ -50,7 +50,15 @@ export async function pullApp(page: Page, c: Config, app: AppConfig, o: { force?
       return false;
     }
   }
-  const fields = await fetchRemote(page, c, app);
+  const all = await fetchRemoteAll(page, c, app);
+  // 后台“支持的语言”里勾了、本地还没同步的语言：加进配置，一起拉下来
+  const added = supportedLanguages(all).filter((l) => !app.languages.includes(l));
+  if (added.length) {
+    addAppLanguages(c.file, app.key, added);
+    app.languages = [...app.languages, ...added];
+    log(`  + 后台勾选了 ${added.map((l) => LANG_NAMES[l] ?? l).join('、')}，已加进同步语言（steam.config.yaml），一起拉取`);
+  }
+  const fields = keepLanguages(app, all);
   await saveRemoteMeta(page, c, app);
   writeLocal(app, fields);
   writeSnapshot(c, app, fields);

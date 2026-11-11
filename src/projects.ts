@@ -1,10 +1,12 @@
 // 项目管理：网页上添加的游戏项目列表、新项目初始化、配置的读写（给网页的设置页用）。
 // 配置文件仍然是 steam.config.yaml，网页只是把它做成表单；用 YAML Document 修改，保留注释。
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import YAML from 'yaml';
 import { appHome, loadConfig } from './config.js';
 import { STEAM_LANGS } from './local/storeFiles.js';
+import { INBOX } from './local/inbox.js';
 
 export const CONFIG_NAME = 'steam.config.yaml';
 const PKG_ROOT = join(import.meta.dirname, '..');
@@ -118,12 +120,39 @@ export function initProject(config: string, o: InitOptions): string[] {
   doc.commentBefore = ' AutoSteamworks 配置（可以在网页的“设置”里修改）。路径都相对于本文件所在的目录。';
   writeFileSync(config, doc.toString({ lineWidth: 0 }));
   const made = [CONFIG_NAME];
+  // 图片收件箱：图片随便丢进来，网页上点“整理”自动分到各目录
+  mkdirSync(join(dir, 'apps', key, 'assets', INBOX), { recursive: true });
+  made.push(`apps/${key}/assets/${INBOX}/（图片丢这里，自动整理）`);
 
   const rules = join(dir, 'STEAM_RULES.md');
   if (!existsSync(rules)) { copyFileSync(join(PKG_ROOT, 'templates', 'STEAM_RULES.md'), rules); made.push('STEAM_RULES.md'); }
   for (const f of ensureAiPointer(dir)) made.push(`${f}（加了指向 STEAM_RULES.md 的说明）`);
   if (ensureGitignore(dir)) made.push('.gitignore（加了 .autosw/）');
   return made;
+}
+
+/**
+ * 只用 App ID 新建项目时，项目文件夹放在这里（用户看得见的位置，方便往里丢图片、让 AI 改文件）。
+ * 测试设了 AUTOSW_HOME 时放到它下面，避免碰到真实的用户目录。
+ */
+export const projectsRoot = () =>
+  process.env.AUTOSW_PROJECTS ?? (process.env.AUTOSW_HOME ? join(process.env.AUTOSW_HOME, 'projects') : join(homedir(), 'AutoSteamworks'));
+
+/** 只填 App ID（名称可选）：在 projectsRoot() 下建文件夹、初始化、加进列表。同一个 appid 已经有项目时直接返回那个 */
+export function createProjectByAppid(o: { appid: unknown; name?: string; languages?: string[] }): { config: string; made: string[]; existed: boolean } {
+  const appid = checkAppid(o.appid);
+  for (const rec of listProjects()) {
+    if (projectSummary(rec).apps.some((a) => a.appid === appid)) return { config: rec.config, made: [], existed: true };
+  }
+  const name = o.name?.trim() || `App ${appid}`;
+  const safe = (o.name ?? '').trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/[. ]+$/, '');
+  const dir = join(projectsRoot(), safe ? `${appid} ${safe}` : String(appid));
+  const config = join(dir, CONFIG_NAME);
+  mkdirSync(dir, { recursive: true });
+  // 以前建过又从列表里移除了：配置还在，重新加进列表就行
+  const made = existsSync(config) ? [] : initProject(config, { name, appid, languages: o.languages?.length ? o.languages : ['english', 'schinese'] });
+  addProject(dir);
+  return { config, made, existed: !made.length };
 }
 
 /** 快照、上传记录不该进游戏项目的 git。返回是否改了文件 */
@@ -303,6 +332,7 @@ export function aiPrompt(config: string): string {
     ...lines,
     `- 规则文件：${rules.path}`,
     `- 检查命令（改完必须运行）：${check}`,
+    `- 整理图片命令（把 待分类/ 里的图片放到对应目录，先加 -n 演练）：${check.replace(/ check$/, ' sort-images')}`,
     '',
     '这次的任务：先完整阅读下面的规则，然后按“工作流程”从第 1 步开始，把能从项目资料里得到的配置、商店文本和图片都准备好。需要我提供的信息（appid、构建账号、价格、发售日期等）就直接问我，不要编。',
     '',

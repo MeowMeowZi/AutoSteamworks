@@ -5,6 +5,7 @@ import type { Page } from 'playwright-core';
 import { loadConfig, selectApps, type AppConfig, type Config } from './config.js';
 import { openBrowser } from './browser.js';
 import { ensureAiPointer, ensureGitignore } from './projects.js';
+import { describeItem, sortInbox } from './local/inbox.js';
 import { loadStorePage, storeEditUrl } from './partner/store.js';
 import { hasLocal, readLocal, readSnapshot, splitLocalized } from './local/storeFiles.js';
 import { localEdits } from './sync.js';
@@ -100,6 +101,19 @@ program.command('status [apps...]').description('（离线）列出本地相对�
       console.log(`${app.key}: ${edits.length ? edits.length + ' 处改动' : '无改动'}`);
       edits.forEach((k) => console.log('  ↑ ' + display(k)));
     }
+  });
+
+program.command('sort-images [apps...]').description('（离线）把 assets/待分类/ 里的图片按尺寸和文件名整理到对应目录')
+  .option('-n, --dry-run', '只显示每张图会去哪里，不移动')
+  .action((keys: string[], o) => {
+    let failed = false;
+    for (const app of selectApps(cfg(), keys)) {
+      const items = sortInbox(app, !!o.dryRun);
+      console.log(`${app.key}: ${items.length ? `待分类里有 ${items.length} 张图片${o.dryRun ? '（演练，不移动）' : ''}` : '待分类里没有图片'}`);
+      for (const it of items) console.log('  ' + describeItem(it));
+      failed ||= items.some((it) => !it.to);
+    }
+    process.exitCode = failed ? 1 : 0;
   });
 
 program.command('check [apps...]').description('（离线）按规则检查本地商店文本，并列出未上传的改动；有错误时退出码为 1')

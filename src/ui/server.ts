@@ -13,8 +13,9 @@ import { assetsApp, deleteImagesApp, diffApp, DRAFT_NOTE, loginFlow, pullApp, pu
 import { readMeta } from '../partner/meta.js';
 import { describeField, LANG_NAMES } from '../fieldInfo.js';
 import { imageBoard } from './images.js';
+import { addToInbox, describeItem, placeImage, sortInbox } from '../local/inbox.js';
 import {
-  addProject, initProject, listProjects, projectSummary, aiPrompt, readRules, readSettings, removeProject, requireProject, upgradeRules, writeRules, writeSettings,
+  addProject, createProjectByAppid, initProject, projectsRoot, listProjects, projectSummary, aiPrompt, readRules, readSettings, removeProject, requireProject, upgradeRules, writeRules, writeSettings,
 } from '../projects.js';
 import { createShortcuts, isWindows, pickFolder } from '../desktop.js';
 
@@ -122,7 +123,7 @@ export async function startUi(o: UiOptions) {
     }
     return {
       projects, current, openProject, job: job && { action: job.action, project: job.project, app: job.app }, lastResult,
-      windows: isWindows, langs: STEAM_LANGS.map((l) => ({ id: l, name: LANG_NAMES[l] ?? l })),
+      windows: isWindows, projectsRoot: projectsRoot(), langs: STEAM_LANGS.map((l) => ({ id: l, name: LANG_NAMES[l] ?? l })),
     };
   }
 
@@ -225,6 +226,16 @@ export async function startUi(o: UiOptions) {
     res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(body));
   };
+  const readRaw = async (req: IncomingMessage, limit: number) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const ch of req) {
+      size += (ch as Buffer).length;
+      if (size > limit) throw new Error(`文件太大（超过 ${limit / 1024 / 1024} MB）`);
+      chunks.push(ch as Buffer);
+    }
+    return Buffer.concat(chunks);
+  };
   const readBody = async (req: IncomingMessage) => {
     const chunks: Buffer[] = [];
     for await (const ch of req) chunks.push(ch as Buffer);
@@ -280,6 +291,17 @@ export async function startUi(o: UiOptions) {
       }
 
       if (req.method !== 'POST') return json(res, 404, { error: 'not found' });
+      if (url.pathname === '/api/images/drop') {
+        // 网页拖进来的图片，请求体是文件本身；不带 slot 就放进待分类，带 slot + lang 就直接放到那一格
+        const { app } = appOf(q('project'), q('app'));
+        if (job?.action === 'assets') return json(res, 409, { error: '正在上传图片，等它结束再放新图片' });
+        const bytes = await readRaw(req, 50 * 1024 * 1024);
+        const name = q('name') ?? '';
+        const slot = q('slot');
+        const line = slot ? placeImage(app, name, bytes, slot, q('lang') ?? '') : `已放进 ${addToInbox(app, name, bytes)}`;
+        touched();
+        return json(res, 200, { line });
+      }
       const b = await readBody(req);
       switch (url.pathname) {
         case '/api/projects/pick':
@@ -288,6 +310,11 @@ export async function startUi(o: UiOptions) {
           const rec = addProject(String(b.path ?? ''));
           touched();
           return json(res, 200, rec);
+        }
+        case '/api/projects/create': {
+          const r = createProjectByAppid({ appid: b.appid, name: b.name, languages: b.languages });
+          touched();
+          return json(res, 200, r);
         }
         case '/api/projects/remove':
           removeProject(requireProject(b.project));
@@ -318,6 +345,14 @@ export async function startUi(o: UiOptions) {
           writeLocalField(app, b.key, b.value);
           touched();
           return json(res, 200, { ok: true });
+        }
+        case '/api/images/sort': {
+          // 只在本地移动文件，不碰后台，不占用任务；只是别在上传图片的时候挪文件
+          const { app } = appOf(b.project, b.app);
+          if (job?.action === 'assets') return json(res, 409, { error: '正在上传图片，等它结束再整理' });
+          const items = sortInbox(app);
+          touched();
+          return json(res, 200, { items, lines: items.map(describeItem) });
         }
         case '/api/run': {
           const r = b as RunReq;

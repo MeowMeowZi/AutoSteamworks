@@ -82,6 +82,7 @@ try {
   assert.equal(r.status, 200);
   assert.ok(existsSync(join(g2, 'STEAM_RULES.md')));
   assert.match(readFileSync(join(g2, 'CLAUDE.md'), 'utf8'), /STEAM_RULES\.md/, '初始化时让 Claude Code 知道规则文件');
+  assert.ok(existsSync(join(g2, 'apps', 'game', 'assets', '待分类')), '初始化时建好图片收件箱');
   assert.match(readFileSync(join(g2, '.gitignore'), 'utf8'), /^Library\/\n# AutoSteamworks.*\n\.autosw\/\n$/);
   st = await stateOf(c2);
   assert.equal(st.current.configured, true);
@@ -133,6 +134,28 @@ try {
   assert.equal((await rawPost('/api/projects/remove', { project: c2 })).status, 200);
   assert.ok(existsSync(c2), '移除项目不删文件');
   assert.match((await (await rawPost('/api/rules', { project: c2, text: 'x' })).json()).error, /未知项目/, '不在列表里的项目不能读写');
+
+  // ---- 只填 App ID 添加：自动建文件夹并初始化；同一个 appid 不重复建 ----
+  const root = join(ws, 'home', 'projects');
+  assert.equal((await get('/api/state')).projectsRoot, root);
+  assert.match((await (await rawPost('/api/projects/create', { appid: 'x' })).json()).error, /appid/);
+  let cr = await (await rawPost('/api/projects/create', { appid: 3000, name: '新游戏: 第一部' })).json();
+  const c3 = join(root, '3000 新游戏 第一部', 'steam.config.yaml');
+  assert.deepEqual([cr.config, cr.existed], [c3, false], '文件夹名去掉了 Windows 不允许的字符');
+  assert.ok(existsSync(join(root, '3000 新游戏 第一部', 'STEAM_RULES.md')));
+  st = await stateOf(c3);
+  assert.deepEqual([st.current.apps[0].appid, st.current.apps[0].name, st.current.apps[0].languages], [3000, '新游戏: 第一部', ['english', 'schinese']]);
+  cr = await (await rawPost('/api/projects/create', { appid: 3000 })).json();
+  assert.deepEqual([cr.config, cr.existed], [c3, true], '同一个 appid 直接返回已有项目');
+  cr = await (await rawPost('/api/projects/create', { appid: 100 })).json();
+  assert.equal(cr.config, P, '用文件夹添加的项目也按 appid 认出来');
+  cr = await (await rawPost('/api/projects/create', { appid: 3001 })).json();
+  assert.equal(cr.config, join(root, '3001', 'steam.config.yaml'), '不填名称时文件夹就叫 appid');
+  assert.equal(YAML.parse(readFileSync(cr.config, 'utf8')).apps.game.name, 'App 3001');
+  for (const c of [c3, cr.config]) assert.equal((await rawPost('/api/projects/remove', { project: c })).status, 200);
+  cr = await (await rawPost('/api/projects/create', { appid: 3001 })).json();
+  assert.deepEqual([cr.existed, (await get('/api/state')).projects.some((p: any) => p.config === cr.config)], [true, true], '移除后再添加：沿用原来的文件夹');
+  assert.equal((await rawPost('/api/projects/remove', { project: cr.config })).status, 200);
 
   let a = await game();
   assert.equal(a.pulled, false);
@@ -225,6 +248,51 @@ try {
   assert.ok(a.images.issues.some((i: any) => /bad\.png.*100x100/.test(i.msg)), '尺寸不对的图报错');
   assert.deepEqual(a.images.pending, ['store/english/header.png', 'store/english/small.png'], '尺寸不对的图不算待上传');
   assert.equal(a.summary.imagesPending, 2);
+  // 待分类：网页上能看到每张图会去哪里，点“整理”移动
+  put('待分类/竖向_英文.png', png(748, 896));
+  a = await game();
+  assert.deepEqual(a.images.inbox.items.map((x: any) => [x.from, x.to, x.slot]), [['待分类/竖向_英文.png', 'store/english/竖向_英文.png', '竖向宣传图']]);
+  const sorted = await rawPost('/api/images/sort', { project: P, app: 'game' });
+  assert.equal(sorted.status, 200);
+  assert.match((await sorted.json()).lines[0], /竖向宣传图/);
+  a = await game();
+  assert.equal(a.images.inbox.items.length, 0);
+  assert.equal(cell(a, 'vertical_capsule', 'english').status, 'pending', '整理后就是待上传');
+  rmSync(join(ws, 'apps', 'game', 'assets', 'store', 'english', '竖向_英文.png'));
+
+  // 拖拽：请求体就是文件本身
+  const drop = async (q: Record<string, string>, data: Buffer, o = origin) => {
+    const r = await fetch(origin + '/api/images/drop?' + new URLSearchParams({ project: P, app: 'game', ...q }),
+      { method: 'POST', headers: { origin: o, 'content-type': 'image/png' }, body: new Uint8Array(data) });
+    return { status: r.status, ...(await r.json()) };
+  };
+  const AD = join(ws, 'apps', 'game', 'assets');
+  // 拖到页面空白处：先进待分类，再整理
+  let d = await drop({ name: '竖向_cn.png' }, png(748, 896, 3));
+  assert.equal(d.status, 200);
+  assert.ok(existsSync(join(AD, '待分类', '竖向_cn.png')));
+  assert.equal((await drop({ name: '竖向_cn.png' }, png(748, 896, 4))).line, '已放进 待分类/竖向_cn-2.png', '重名加序号，不覆盖');
+  assert.equal((await rawPost('/api/images/sort', { project: P, app: 'game' })).status, 200);
+  // 按文件名顺序，竖向_cn-2.png 排在前面，先占了位置
+  assert.ok(existsSync(join(AD, 'store', 'schinese', '竖向_cn-2.png')));
+  assert.ok(existsSync(join(AD, '待分类', '竖向_cn.png')), '抢同一个位置的留在待分类');
+  rmSync(join(AD, '待分类', '竖向_cn.png'));
+  // 拖到某一格：直接放到那个位置和语言，原来的挪到 已替换/
+  d = await drop({ name: 'new_vertical.png', slot: 'vertical_capsule', lang: 'schinese' }, png(748, 896, 5));
+  assert.match(d.line, /store\/schinese\/new_vertical\.png.*原来的 store\/schinese\/竖向_cn-2\.png 挪到 已替换/);
+  assert.ok(existsSync(join(AD, '已替换', 'store', 'schinese', '竖向_cn-2.png')));
+  d = await drop({ name: 'x.png', slot: 'vertical_capsule', lang: 'schinese' }, png(920, 430));
+  assert.equal(d.status, 500);
+  assert.match(d.error, /920 x 430.*竖向宣传图要求 748 x 896/, '尺寸不对的格子拒绝');
+  assert.match((await drop({ name: 'x.png', slot: 'header', lang: 'japanese' }, png(920, 430))).error, /japanese/);
+  assert.match((await drop({ name: 'evil.exe' }, Buffer.from('MZ'))).error, /只支持/);
+  assert.equal((await drop({ name: '..\\..\\escape.png' }, png(920, 430))).line, '已放进 待分类/escape.png', '文件名里的路径被去掉');
+  assert.equal((await drop({ name: 'a.png' }, png(920, 430), 'http://evil.example')).status, 403, '别的网页不能往这里放文件');
+  rmSync(join(AD, '待分类', 'escape.png'));
+  rmSync(join(AD, 'store', 'schinese'), { recursive: true });
+  rmSync(join(AD, '已替换'), { recursive: true });
+  a = await game();
+
   const img = await asset('store/english/header.png');
   assert.equal(img.headers.get('content-type'), 'image/png');
 

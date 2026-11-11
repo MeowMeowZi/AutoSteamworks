@@ -1,7 +1,10 @@
 // 图片页的数据：按后台的槽位（形象图片、小宣传图…）× 语言排成表，每格写清楚本地有什么、后台有什么、该做什么。
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import type { AppConfig, Config } from '../config.js';
 import { assetStates, readManifest, scanAssets, type AssetState } from '../local/assetFiles.js';
 import { imageSize } from '../local/imageSize.js';
+import { INBOX, planInbox } from '../local/inbox.js';
 import type { RemoteMeta } from '../partner/meta.js';
 import { classify, remotePath, remoteScreenshotCount, sizesFor, SLOTS, type Slot } from '../slots.js';
 import { LANG_NAMES } from '../fieldInfo.js';
@@ -39,6 +42,8 @@ const STATUS_TEXT: Record<CellStatus, string> = {
 };
 
 export function imageBoard(c: Config, app: AppConfig, meta: RemoteMeta | undefined) {
+  // 旧项目没有收件箱：打开网页时顺手建好，用户能直接往里丢图片
+  mkdirSync(join(app.assets.dir, INBOX), { recursive: true });
   const { assets, warnings } = scanAssets(app);
   const manifest = readManifest(c, app);
   const cdn = meta?.cdnBase ?? `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${app.appid}/`;
@@ -97,6 +102,8 @@ export function imageBoard(c: Config, app: AppConfig, meta: RemoteMeta | undefin
     screenshots: { local: screenshots, remoteCount: remoteScreenshotCount(meta?.assets), where: SLOTS.find((s) => s.id === 'screenshot')!.where },
     unmatched,
     issues,
+    /** 待分类里的图片和各自会去的位置 */
+    inbox: { dir: INBOX, items: planInbox(app) },
     pending: [...slots.flatMap((s) => Object.values(s.cells)).filter((x) => x.status === 'pending').map((x) => x.local!.rel),
       ...screenshots.filter((s) => s.state !== 'same').map((s) => s.rel)],
   };

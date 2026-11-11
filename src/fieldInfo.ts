@@ -86,8 +86,8 @@ function common(key: string, scraped?: string): FieldInfo {
   if (root === 'app' && a === 'content' && b === 'sysreqs')
     return { tab: '基本信息', group: `系统需求 · ${OS[c] ?? c} · ${REQ[d] ?? d}`, label: parts.slice(5).map((x) => SYSREQ[x] ?? x).join(' · ') };
   if (key === 'app[classification][primary_genre]') return { tab: '基本信息', group: '类型与功能', label: '主要类型', primary: true };
-  if (root === 'rgGenres') return { tab: '基本信息', group: '类型与功能', label: s ? `类型：${s}` : `类型 #${a}` };
-  if (root === 'app' && a === 'classification' && b === 'category') return { tab: '基本信息', group: '类型与功能', label: s ? `功能：${s}` : `功能 ${c}` };
+  if (root === 'rgGenres') return { tab: '基本信息', group: '类型与功能', label: s ? `类型：${s}` : `未命名类型 #${a}` };
+  if (root === 'app' && a === 'classification' && b === 'category') return { tab: '基本信息', group: '类型与功能', label: s ? `功能：${s}` : `未命名功能 #${c.replace('category_', '')}` };
   if (root === 'tags') return { tab: '基本信息', group: '类型与功能', label: '标签' };
   if (root === 'app' && a === 'content' && /wizard$|keyboardmouse/.test(b)) return { tab: '基本信息', group: '控制器 / 辅助功能', label: `${b} ${c ?? ''}`.trim() };
   if (root === 'app' && a === 'assets' && b === 'manuals') return { tab: '基本信息', group: '手册', label: `手册 ${Number(c) + 1} · ${{ language: '语言', system: '系统', type: '类型' }[d] ?? d}` };

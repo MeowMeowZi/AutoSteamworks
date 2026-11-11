@@ -36,6 +36,9 @@
   table.apps input[type=text], table.apps input[type=number] { width:100%; padding:5px 8px; border:1px solid #cfd4db; border-radius:6px; font:inherit; }
   .err-box { background:var(--err-bg); color:var(--err); border-radius:8px; padding:10px 14px; margin-bottom:12px; }
   textarea.rules { min-height:calc(100vh - 330px); }
+  .dropon { outline:3px dashed var(--accent); outline-offset:-3px; background:var(--accent-bg) !important; }
+  #dropmask { display:none; position:fixed; inset:auto 20px 20px auto; z-index:50; background:var(--accent); color:#fff; padding:10px 16px; border-radius:8px; font-size:14px; box-shadow:0 4px 16px rgba(0,0,0,.2); pointer-events:none; }
+  body.dragging #dropmask { display:block; }
   .layout { display:flex; min-height:calc(100vh - 48px); }
   nav { width:230px; flex:none; border-right:1px solid var(--line); background:var(--card); padding:12px 0; }
   nav .app { display:block; padding:10px 16px; cursor:pointer; border-left:3px solid transparent; }
@@ -122,8 +125,25 @@
   table.kv { width:100%; border-collapse:collapse; font-size:13px; }
   table.kv td { border-top:1px solid var(--line); padding:7px 14px; vertical-align:top; }
   table.kv tr:first-child td { border-top:0; }
-  table.kv td.k { width:38%; }
-  table.kv td.k .mono { color:#9aa4b2; display:block; word-break:break-all; }
+  table.kv td.k { width:260px; color:#374151; }
+  table.kv td.k[title] { cursor:help; }
+  table.kv td { padding:6px 14px; }
+  /* 支持语言表 */
+  table.langgrid { border-collapse:collapse; font-size:13px; margin:10px 14px; }
+  table.langgrid th, table.langgrid td { padding:4px 18px 4px 0; text-align:left; border-top:1px solid var(--line); white-space:nowrap; }
+  table.langgrid thead th { border-top:0; color:var(--muted); font-weight:600; font-size:12px; }
+  table.langgrid tbody th { font-weight:normal; padding-right:28px; }
+  table.langgrid td { text-align:center; min-width:70px; cursor:help; }
+  table.langgrid .on { color:var(--ok); font-weight:700; } table.langgrid .off { color:#c4cad3; }
+  table.langgrid td.edited { background:#f5faff; }
+  /* 复选框类字段：标签 */
+  .chips { display:flex; flex-wrap:wrap; gap:6px; padding:10px 14px; }
+  .chip { display:inline-flex; align-items:center; gap:4px; font-size:13px; padding:2px 10px; border-radius:12px; border:1px solid var(--line); cursor:help; }
+  .chip.on { background:var(--ok-bg); border-color:#b7dfc1; color:#1d4d2b; }
+  .chip.off { color:#9aa4b2; }
+  .chip.edited { background:var(--info-bg); border-color:#bcd7f5; }
+  .chips + table.kv, table.langgrid + table.kv, table.langgrid + .chips { border-top:1px solid var(--line); }
+  a.delimg { color:var(--muted); font-size:11px; } a.delimg:hover { color:var(--err); }
   table.kv tr.edited { background:#f5faff; }
 
   /* 图片 */
@@ -160,15 +180,16 @@
 </div>
 <div class="actionbar" id="actionbar" style="display:none"></div>
 <pre id="log"></pre>
+<div id="dropmask"></div>
 <div id="logbar"><span id="logstate">▸ 日志</span><span class="muted" id="loglast"></span></div>
 <script>
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const LANG = { english: '英语', schinese: '简体中文', tchinese: '繁体中文', japanese: '日语', koreana: '韩语', '*': '所有语言' };
-const langName = (l) => LANG[l] || l;
+const langName = (l) => LANG[l] || S?.langs?.find((x) => x.id === l)?.name || l;
 const KIND = { local: ['本地改动', 'info'], remote: ['后台被改过', 'warn'], conflict: ['冲突：两边都改了', 'err'], gone: ['后台已没有这个字段', 'err'] };
 const ACTION = { pull: '从后台拉取', diff: '刷新后台状态', push: '上传文本', assets: '上传图片', 'delete-images': '删除后台图片', login: '登录 Steam' };
-const CELL_PILL = { pending: 'info', synced: 'ok', uploaded: 'ok', lost: 'err', 'remote-only': 'warn', 'missing-required': 'err', fallback: '', empty: '' };
+const CELL_PILL = { pending: 'info', synced: 'ok', uploaded: 'ok', lost: 'err', 'remote-only': '', 'missing-required': 'err', fallback: '', empty: '' };
 
 let S = null;
 let project = localStorage.project || '';   // 当前项目（配置文件路径）
@@ -242,7 +263,7 @@ function bbcode(src) {
   for (const [re, to] of rep) h = h.replace(re, to);
   return h.replace(/\n/g, '<br>');
 }
-const showVal = (v) => typeof v === 'boolean' ? (v ? '✔ 是' : '✘ 否') : v === '' || v === undefined ? '' : String(v);
+const showVal = (v) => typeof v === 'boolean' ? (v ? '✔ 是' : '✘ 否') : v === '' || v === undefined ? '' : v === '_none_' ? '（无）' : String(v);
 function diffHtml(f) {
   if (f.parts) return f.parts.map((p) => p.t > 0 ? `<ins>${esc(p.v)}</ins>` : p.t < 0 ? `<del>${esc(p.v)}</del>` : esc(p.v)).join('');
   return esc(showVal(f.local));
@@ -298,7 +319,12 @@ function renderResult(a) {
 // ================= 文本 =================
 const TABS = ['描述', '基本信息', '抢先体验', '特别设置', '其他'];
 const TAB_WHERE = { 描述: '商店页管理 → 描述', 基本信息: '商店页管理 → 基本信息', 抢先体验: '商店页管理 → 抢先体验', 特别设置: '商店页管理 → 特别设置', 其他: '' };
-const shown = (f) => view === 'all' || f.edited || f.remote || (view === 'filled' && f.local !== '' && f.local !== false);
+const shown = (f) => {
+  if (f.edited || f.remote) return true;
+  // 存储空间、内存的单位跟着数值一起显示，不单独占一行（只有单位、没有数值的不显示）
+  if (/\[units\]$/.test(f.key)) return view === 'all' && !/\[(diskspace|memory)\]\[units\]$/.test(f.key);
+  return view === 'all' || (view === 'filled' && f.local !== '' && f.local !== false);
+};
 const matches = (f) => !filter || [f.info.label, f.info.group, f.key, String(f.local)].some((x) => x.toLowerCase().includes(filter.toLowerCase()));
 
 function textRows(a) {
@@ -328,6 +354,86 @@ function fieldCell(a, f, lang) {
   if (showPreview && typeof f.local === 'string' && f.local) body += `<div class="preview">${bbcode(f.local)}</div>`;
   if (f.remote && f.remote.kind !== 'local') body += `<div class="small muted" style="margin-top:6px">后台现在的值：</div><div class="val">${f.remote.value === undefined ? '（无）' : esc(showVal(f.remote.value))}</div>`;
   return `<div class="cell ${f.edited ? 'edited' : ''}">${head}${body}</div>`;
+}
+
+// ---- 和语言无关的字段：复选框类的合成标签 / 语言表，其余一行一个 ----
+const isOn = (v) => v === true || v === 'true' || v === '1';
+const LANG_RE = /^app\[content\]\[supported_languages\]\[([a-z_]+)\]\[(supported|full_audio|subtitles)\]$/;
+const FLAG_RE = /^app\[classification\]\[category\]|^rgGenres\[|^app\[platforms\]|^tags\[\]\[=|wizard\]/;
+const pickBox = (f) => f.edited ? `<input type="checkbox" data-pick="${esc(f.key)}" data-def="${defPick(f) ? 1 : 0}" ${isPicked(f.key, defPick(f)) ? 'checked' : ''} title="勾选后上传">` : '';
+const kindPill = (f) => { const k = f.remote?.kind || (f.edited ? 'local' : null); return k ? `<span class="pill ${KIND[k][1]}">${KIND[k][0]}</span>` : ''; };
+const flagOn = (f) => isOn(f.local) || (f.local === true);
+/** 复选框类字段：被勾选、被改过，或者“全部字段”视图时显示 */
+const flagShown = (f) => matches(f) && (view === 'all' || f.edited || f.remote || (view === 'filled' && flagOn(f)));
+
+function renderCommon(a, fields) {
+  if (!fields.length) return '';
+  const langs = fields.filter((f) => LANG_RE.test(f.key));
+  const flags = fields.filter((f) => !LANG_RE.test(f.key) && FLAG_RE.test(f.key));
+  const plain = fields.filter((f) => !langs.includes(f) && !flags.includes(f));
+  let h = '';
+
+  // 支持语言：语言 × 界面 / 完全音频 / 字幕
+  const byLang = new Map();
+  for (const f of langs) {
+    const [, l, col] = f.key.match(LANG_RE);
+    if (!byLang.has(l)) byLang.set(l, {});
+    byLang.get(l)[col] = f;
+  }
+  const langRows = [...byLang].filter(([, cols]) => Object.values(cols).some(flagShown));
+  if (langRows.length) {
+    const COLS = [['supported', '界面'], ['full_audio', '完全音频'], ['subtitles', '字幕']];
+    const cell = (f) => {
+      if (!f) return '<td></td>';
+      const mark = (v) => isOn(v) ? '<span class="on">✔</span>' : '<span class="off">—</span>';
+      return `<td class="${f.edited ? 'edited' : ''}" title="${esc(f.key)}">${pickBox(f)}${f.edited ? `${mark(f.base)} → ${mark(f.local)}` : mark(f.local)}${kindPill(f)}</td>`;
+    };
+    h += `<table class="langgrid"><thead><tr><th>语言</th>${COLS.map(([, t]) => `<th>${t}</th>`).join('')}</tr></thead><tbody>
+      ${langRows.map(([l, cols]) => `<tr><th>${esc(langName(l))}${a.languages.includes(l) ? ' <span class="pill info" title="这个语言的商店文本在同步">同步中</span>' : ''}</th>${COLS.map(([c]) => cell(cols[c])).join('')}</tr>`).join('')}
+    </tbody></table>`;
+  }
+
+  // 其他复选框：标签
+  const shownFlags = flags.filter(flagShown);
+  if (shownFlags.length) {
+    h += `<div class="chips">${shownFlags.map((f) => {
+      const label = f.info.label.replace(/^(功能|类型)[：\s]/, '');
+      const cls = f.edited ? 'edited' : flagOn(f) ? 'on' : 'off';
+      const unnamed = label.startsWith('未命名');
+      return `<span class="chip ${cls}" title="${esc(f.key)}${unnamed ? '&#10;后台编辑页上这个选项没有显示名字（可能是别的页面或问卷设置的）' : ''}">${pickBox(f)}${flagOn(f) ? '✔' : '✘'} ${esc(label)}${f.edited ? `（原来${isOn(f.base) ? '勾选' : '未勾选'}）` : ''}${kindPill(f)}</span>`;
+    }).join('')}</div>`;
+  }
+
+  // 普通字段：一行一个；数值 + 单位合成一行
+  const byKey = new Map(a.common.map((f) => [f.key, f])); // 包括被筛掉的单位字段
+  const unitOf = (f) => f.key.endsWith('[amount]') ? byKey.get(f.key.replace(/\[amount\]$/, '[units]')) : undefined;
+  const rows = plain.filter((f) => {
+    if (!matches(f)) return false;
+    if (f.edited || f.remote) return true;
+    if (f.key.endsWith('[units]')) {
+      // 单位跟着数值显示；只有“全部字段”视图才单独列出
+      const amt = byKey.get(f.key.replace(/\[units\]$/, '[amount]'));
+      return view === 'all' && !amt;
+    }
+    return shown(f);
+  });
+  if (rows.length) {
+    const display = (f, v) => {
+      if (f.key === 'app[classification][primary_genre]' && v) {
+        const g = allFields(a).find((x) => x.key === `rgGenres[${v}]`);
+        if (g) return `${g.info.label.replace(/^类型[：\s]/, '')}（${v}）`;
+      }
+      const u = unitOf(f);
+      return showVal(v) + (u && showVal(v) && !u.edited ? ' ' + showVal(u.local) : '');
+    };
+    h += `<table class="kv">${rows.map((f) => {
+      const label = f.info.label.replace(/ · 数值$/, '');
+      return `<tr class="${f.edited ? 'edited' : ''}"><td class="k" title="${esc(f.key)}">${pickBox(f)} ${esc(label)} ${kindPill(f)}</td>
+        <td><div class="val">${f.edited ? `<del>${esc(display(f, f.base))}</del> → <ins>${esc(display(f, f.local))}</ins>` : esc(display(f, f.local)) || '<span class="muted">（空）</span>'}</div>
+        ${f.remote && f.remote.kind !== 'local' ? `<div class="small muted">后台现在：${f.remote.value === undefined ? '（无）' : esc(showVal(f.remote.value))}</div>` : ''}</td></tr>`;
+    }).join('')}</table>`;
+  }
+  return h;
 }
 
 function renderText(a) {
@@ -360,19 +466,10 @@ function renderText(a) {
     const gr = mine.filter((r) => r.info.group === g);
     h += `<div class="card"><div class="hd"><h3>${esc(g)}</h3>${TAB_WHERE[subtab] ? `<span class="where">${esc(TAB_WHERE[subtab])}</span>` : ''}</div>`;
     for (const r of gr.filter((r) => r.loc)) {
-      h += `<div class="field"><div class="fh"><b>${esc(r.info.label)}</b><span class="mono muted">${esc(r.loc.path)}</span></div>
+      h += `<div class="field"><div class="fh"><b title="${esc(r.loc.path)}" style="cursor:help">${esc(r.info.label)}</b></div>
         <div class="cols" style="--n:${a.languages.length}">${a.languages.map((l) => fieldCell(a, r.loc.langs[l], l)).join('')}</div></div>`;
     }
-    const com = gr.filter((r) => r.field);
-    if (com.length) {
-      h += `<table class="kv">${com.map(({ field: f }) => {
-        const kind = f.remote?.kind || (f.edited ? 'local' : null);
-        return `<tr class="${f.edited ? 'edited' : ''}"><td class="k">
-          ${f.edited ? `<input type="checkbox" data-pick="${esc(f.key)}" data-def="${defPick(f) ? 1 : 0}" ${isPicked(f.key, defPick(f)) ? 'checked' : ''}> ` : ''}
-          ${esc(f.info.label)} ${kind ? `<span class="pill ${KIND[kind][1]}">${KIND[kind][0]}</span>` : ''}<span class="mono">${esc(f.key)}</span></td>
-          <td><div class="val">${f.edited ? `<del>${esc(showVal(f.base))}</del> → <ins>${esc(showVal(f.local))}</ins>` : esc(showVal(f.local)) || '<span class="muted">（空）</span>'}</div></td></tr>`;
-      }).join('')}</table>`;
-    }
+    h += renderCommon(a, gr.filter((r) => r.field).map((r) => r.field));
     h += `</div>`;
   }
   return h + `</div></div>`;
@@ -390,14 +487,14 @@ function imgCell(a, slot, lang, span) {
   const c = slot.cells[lang];
   const id = c.local && 'asset:' + c.local.rel;
   const pick = c.status === 'pending' ? `<input type="checkbox" data-pick="${esc(id)}" data-def="1" ${isPicked(id, true) ? 'checked' : ''} title="勾选后上传"> ` : '';
-  return `<td ${span ? `colspan="${span}"` : ''}><div class="thumbs" ${span ? 'style="max-width:420px"' : ''}>
+  return `<td data-dropslot="${esc(slot.id + '|' + lang)}" data-droplabel="${esc(slot.label + (slot.localized ? '（' + langName(lang) + '）' : ''))}" ${span ? `colspan="${span}"` : ''}><div class="thumbs" ${span ? 'style="max-width:420px"' : ''}>
       ${thumb('本地', c.local && localUrl(a, c.local.rel, c.local.bytes), '本地没有')}
       ${thumb('后台', c.remoteUrl, a.remoteAt ? '后台没有' : '还没读取<br>点“刷新后台状态”')}
     </div>
     <div class="cellfoot">${pick}<span class="pill ${CELL_PILL[c.status]}">${esc(c.text)}</span>
       ${c.local ? `<div class="fn">${esc(c.local.rel)}${c.local.size ? ' · ' + c.local.size : ''}${c.local.uploadedAt ? ' · 上传于 ' + new Date(c.local.uploadedAt).toLocaleString() : ''}</div>` : ''}
       ${c.extra.length ? `<div class="fn" style="color:var(--warn)">⚠ 同一位置还有：${c.extra.map(esc).join('、')}</div>` : ''}
-      ${c.remoteUrl ? `<div class="fn"><a href="#" data-delimg="${esc(slot.id + '|' + lang)}" data-dellabel="${esc(slot.label + (slot.localized ? '（' + langName(lang) + '）' : ''))}" style="color:var(--err)">从后台删除</a></div>` : ''}
+      ${c.remoteUrl ? `<div class="fn"><a href="#" data-delimg="${esc(slot.id + '|' + lang)}" data-dellabel="${esc(slot.label + (slot.localized ? '（' + langName(lang) + '）' : ''))}" class="delimg">从后台删除</a></div>` : ''}
     </div></td>`;
 }
 
@@ -418,16 +515,40 @@ function renderBoard(a, tabId, dir, title, where) {
   return h + '</tbody></table></div>';
 }
 
+let sortMsg = null;
+function renderInbox(a) {
+  const ib = a.images.inbox, ok = ib.items.filter((x) => x.to);
+  let h = `<div class="card"><div class="hd"><h3>待分类</h3><span class="sp"></span>
+    <label class="b" style="cursor:pointer">选择图片…<input type="file" id="pickimgs" multiple accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none"></label></div><div class="bd">
+    <div class="small" style="margin-bottom:8px"><b>把图片直接拖到这个页面上</b>，会按尺寸和文件名自动放到对应位置；拖到下面表格的某一格，就放到那个位置和语言。
+    也可以把图片放进 <code>assets/${ib.dir}/</code> 文件夹，再点“整理”。</div>`;
+  if (sortMsg) h += `<div class="issues" style="margin-bottom:8px">${sortMsg.map((l) => `<div class="${l.startsWith('✗') ? 'error' : ''}">${esc(l)}</div>`).join('')}</div>`;
+  if (!ib.items.length) {
+    h += `<div class="small muted">现在没有待分类的图片。位置按尺寸判断（920 × 430 默认算商店形象图片，文件名带 library 或“库”才算库形象图片）；
+      语言看文件名，例如 <code>header_cn.png</code>、<code>主宣传图_英文.png</code>，也可以放在 <code>${ib.dir}/schinese/</code> 这样的子文件夹里；没写语言就算${langName(a.languages.includes('english') ? 'english' : a.languages[0])}。</div>`;
+  } else {
+    h += `<table class="board"><thead><tr><th>文件</th><th>尺寸</th><th>会放到</th></tr></thead><tbody>${ib.items.map((it) => `<tr>
+      <td class="mono small">${esc(it.from)}</td><td class="small">${esc(it.size ?? '')}</td>
+      <td class="small">${!it.to ? `<span style="color:var(--err)">✗ ${esc(it.reason)}</span>`
+        : it.duplicate ? `和 <code>${esc(it.to)}</code> 完全一样，整理时删掉这张`
+        : `${esc(it.slot)}${it.lang ? `（${langName(it.lang)}）` : ''} → <code>${esc(it.to)}</code>${it.replaces.length ? `<div style="color:var(--warn)">原来的 ${it.replaces.map(esc).join('、')} 会挪到 已替换/</div>` : ''}`}</td></tr>`).join('')}</tbody></table>
+      <div class="row" style="margin-top:8px"><button class="b primary" data-sortinbox ${ok.length ? '' : 'disabled'}>整理 ${ok.length} 张</button>
+      <span class="small muted">只在本地移动文件，不会上传。整理后在下面的表里勾选上传。</span></div>`;
+  }
+  return h + '</div></div>';
+}
+
 function renderImages(a) {
   const im = a.images;
   let h = '';
   if (im.issues.length) h += `<div class="card"><div class="hd"><h3>需要注意</h3></div><div class="bd issues">${im.issues.map((i) => `<div class="${i.level}">${i.level === 'error' ? '✗' : '⚠'} ${esc(i.msg)}</div>`).join('')}</div></div>`;
   if (!a.remoteAt) h += `<div class="card"><div class="bd issues"><div class="warn">还没读取过后台状态，所以“后台”一栏是空的。点上面的“刷新后台状态”读取一次（只读，不会修改后台）。</div></div></div>`;
+  h += renderInbox(a);
   h += `<div class="small muted" style="margin:0 0 10px">提示：后台会把上传的图片改名（例如 <code>header_schinese.jpg</code>），在后台要按“位置 + 语言”找，不要按原文件名找。后台列表里点语言名才会显示图片。</div>`;
   h += renderBoard(a, 'store', 'store', '商店宣传图', '商店页管理 → 图像资产 → 商店资产');
   h += renderBoard(a, 'library', 'library', '库资源', '商店页管理 → 图像资产 → 库资产');
   const sh = im.screenshots;
-  h += `<div class="card"><div class="hd"><h3>截图</h3><span class="where">${esc(sh.where)}</span><span class="sp"></span>
+  h += `<div class="card" data-dropslot="screenshot|*" data-droplabel="截图"><div class="hd"><h3>截图</h3><span class="where">${esc(sh.where)}</span><span class="sp"></span>
     <span class="small muted">本地 ${sh.local.length} 张 · 后台 ${sh.remoteCount ?? '未知'} 张 · 至少 1920 × 1080，所有语言共用</span></div><div class="bd">`;
   h += sh.local.length ? `<div class="shots">${sh.local.map((x) => {
     const id = 'asset:' + x.rel, pending = x.state !== 'same';
@@ -481,15 +602,24 @@ function projectStatus(p) {
 }
 function renderProjects() {
   let h = `<div class="overview"><h2>游戏项目</h2>
-    <div class="muted small">每个游戏项目是电脑上的一个文件夹，商店文本和图片都存在里面（一般就是游戏工程的根目录）。所有项目共用一个 Steam 登录。</div>
-    <div class="row" style="margin-top:14px">
-      ${S.windows ? '<button class="b primary" data-pickfolder>选择文件夹…</button><span class="muted small">或者</span>' : ''}
+    <div class="muted small">每个游戏项目是电脑上的一个文件夹，商店文本和图片都存在里面。所有项目共用一个 Steam 登录。</div>
+    <div style="margin-top:14px"><b>按 App ID 添加</b>
+      <span class="muted small">自动在 <span class="mono">${esc(S.projectsRoot)}</span> 下建文件夹，语言默认英语 + 简体中文（以后在“设置”里改）</span></div>
+    <div class="row" style="margin-top:6px">
+      <input type="number" id="new-appid" placeholder="App ID，例如 5596340" style="width:200px">
+      <input type="text" id="new-name" placeholder="游戏名称（可不填）" style="width:220px">
+      <button class="b primary" data-createproj>添加</button>
+    </div>
+    <div style="margin-top:14px"><b>用已有的文件夹</b>
+      <span class="muted small">想让商店文件和游戏工程放在一起（方便游戏项目里的 AI 修改）时用这个</span></div>
+    <div class="row" style="margin-top:6px">
+      ${S.windows ? '<button class="b" data-pickfolder>选择文件夹…</button><span class="muted small">或者</span>' : ''}
       <input type="search" id="newpath" placeholder="粘贴文件夹路径，例如 D:\\Games\\MyGame" style="width:420px">
       <button class="b" data-addpath>添加</button>
     </div></div>`;
   if (!S.projects.length) {
     h += `<div class="card"><div class="bd"><b>第一次使用？</b><ol style="margin:6px 0 0;padding-left:20px;line-height:1.9">
-      <li>点“选择文件夹…”选择游戏项目的文件夹，填写游戏名称和 App ID。</li>
+      <li>在上面填 App ID 点“添加”（或者选择游戏工程的文件夹）。</li>
       <li>点右上角“登录 Steam”，在弹出的浏览器里登录 Steamworks（只需要一次）。</li>
       <li>点“从后台拉取”，把商店页内容下载到本地，然后就可以修改、上传了。</li></ol></div></div>`;
   }
@@ -557,7 +687,7 @@ function renderSettings() {
     <label>浏览器</label><div><select id="s-browser">${[['msedge', 'Microsoft Edge（推荐，Windows 自带）'], ['chrome', 'Google Chrome']].map(([v, t]) => `<option value="${v}" ${d.browser === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
       <div class="help">用来登录和操作 Steamworks 后台。换浏览器后需要重新登录</div></div>
     <label>请求间隔（毫秒）</label><div><input type="number" id="s-delay" value="${d.delayMs}" style="width:120px"><div class="help">两次打开后台页面之间等多久，避免请求太频繁</div></div>
-    <label>不同步的字段</label><div><textarea id="s-ignore" style="min-height:80px">${esc(d.ignoreFields.join('\n'))}</textarea><div class="help">每行一个表单字段名，支持 * 通配。“商店文本”页里每个字段下面的灰色小字就是字段名</div></div>
+    <label>不同步的字段</label><div><textarea id="s-ignore" style="min-height:80px">${esc(d.ignoreFields.join('\n'))}</textarea><div class="help">每行一个表单字段名，支持 * 通配。在“商店文本”页把鼠标停在字段名上就能看到</div></div>
   </div></div></div>`;
   h += `<div class="row"><button class="b primary" data-savesettings>保存</button><button class="b" data-resetsettings>放弃修改</button>
     <span class="sp"></span>${S.windows ? '<a class="small" data-shortcut>创建桌面快捷方式</a>' : ''}</div>`;
@@ -685,7 +815,7 @@ async function run(body, confirmText) {
 }
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-app],[data-tab],[data-subtab],[data-run],[data-push],[data-assets],[data-edit],[data-revert],[data-save],[data-cancel],[data-pickall],[data-dismiss],[data-openlog],[data-login],[data-quit],[data-page],[data-openproj],[data-removeproj],[data-pickfolder],[data-addpath],[data-init],[data-shortcut],[data-savesettings],[data-resetsettings],[data-addapp],[data-delapp],[data-saverules],[data-copyprompt],[data-upgraderules],[data-delimg]');
+  const t = e.target.closest('[data-app],[data-tab],[data-subtab],[data-run],[data-push],[data-assets],[data-edit],[data-revert],[data-save],[data-cancel],[data-pickall],[data-dismiss],[data-openlog],[data-login],[data-quit],[data-page],[data-openproj],[data-removeproj],[data-pickfolder],[data-createproj],[data-addpath],[data-init],[data-shortcut],[data-savesettings],[data-resetsettings],[data-addapp],[data-delapp],[data-saverules],[data-copyprompt],[data-upgraderules],[data-sortinbox],[data-delimg]');
   if (!t) return;
   const a = app();
   const d = t.dataset;
@@ -702,6 +832,8 @@ document.addEventListener('click', async (e) => {
     const sel = selectedImages(a), dry = d.assets === 'dry';
     run({ action: 'assets', only: sel, dryRun: dry },
       dry ? null : `上传 ${sel.length} 张图片到 Steamworks 后台？\n\n${sel.map((r) => '· ' + r).join('\n')}\n\n会替换后台同位置、同语言的图片（截图会新增一张）。保存为草稿，不在后台点发布就不会上线。`);
+  } else if (d.sortinbox !== undefined) {
+    try { const r = await api('/api/images/sort', P({ app: cur })); sortMsg = r.lines; await load(); } catch (err) { alert(err.message); }
   } else if (d.delimg) {
     e.preventDefault();
     const c = (() => { const [id, l] = d.delimg.split('|'); return a.images.slots.find((s) => s.id === id)?.cells[l]; })();
@@ -740,6 +872,15 @@ ${c?.local ? `本地文件 ${c.local.rel} 不会删除，它会变回“待上�
     try {
       const r = await api('/api/projects/pick', {});
       if (r.path) await addProject(r.path);
+    } catch (err) { alert(err.message); } finally { t.disabled = false; }
+  } else if (d.createproj !== undefined) {
+    const appid = $('#new-appid').value.trim();
+    if (!appid) { $('#new-appid').focus(); return; }
+    t.disabled = true;
+    try {
+      const r = await api('/api/projects/create', { appid: Number(appid), name: $('#new-name').value });
+      if (r.existed) alert('这个 App ID 已经有项目了，直接打开它。');
+      await switchProject(r.config);
     } catch (err) { alert(err.message); } finally { t.disabled = false; }
   } else if (d.addpath !== undefined) {
     const v = $('#newpath').value.trim();
@@ -780,7 +921,7 @@ ${c?.local ? `本地文件 ${c.local.rel} 不会删除，它会变回“待上�
 
 async function switchProject(config) {
   project = localStorage.project = config;
-  page = 'app'; cur = null; editing = null; draft = null; rules = null;
+  page = 'app'; cur = null; editing = null; draft = null; rules = null; sortMsg = null;
   picked.clear(); unpicked.clear();
   await load();
 }
@@ -803,7 +944,69 @@ document.addEventListener('change', (e) => {
     render();
   }
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.id === 'newpath') $('[data-addpath]').click(); });
+// ---- 拖拽图片 ----
+// 拖到表格某一格 → 直接放到那个位置和语言；拖到图片页其他地方 → 放进待分类再自动整理
+const imagesOpen = () => page === 'app' && tab === 'images' && cur;
+const hasFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes('Files');
+let dragDepth = 0;
+function dropHint(e) {
+  const cell = e.target.closest?.('[data-dropslot]');
+  document.querySelectorAll('.dropon').forEach((x) => x !== cell && x.classList.remove('dropon'));
+  cell?.classList.add('dropon');
+  $('#dropmask').textContent = cell ? `松开放到：${cell.dataset.droplabel}` : '松开鼠标，按尺寸和文件名自动整理';
+}
+function endDrag() { dragDepth = 0; document.body.classList.remove('dragging'); document.querySelectorAll('.dropon').forEach((x) => x.classList.remove('dropon')); }
+document.addEventListener('dragenter', (e) => { if (!hasFiles(e) || !imagesOpen()) return; dragDepth++; document.body.classList.add('dragging'); dropHint(e); });
+document.addEventListener('dragleave', (e) => { if (!hasFiles(e)) return; if (--dragDepth <= 0) endDrag(); });
+document.addEventListener('dragover', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); // 否则浏览器会直接打开图片
+  e.dataTransfer.dropEffect = imagesOpen() ? 'copy' : 'none';
+  if (imagesOpen()) dropHint(e);
+});
+document.addEventListener('drop', async (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  const cell = e.target.closest?.('[data-dropslot]');
+  endDrag();
+  if (!imagesOpen()) return;
+  await dropImages([...e.dataTransfer.files], cell?.dataset.dropslot);
+});
+document.addEventListener('change', (e) => {
+  if (e.target.id !== 'pickimgs') return;
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (files.length) dropImages(files);
+});
+
+async function dropImages(files, target) {
+  if (!files.length) return;
+  const [slot, lang] = target ? target.split('|') : [];
+  if (slot && slot !== 'screenshot' && files.length > 1) { alert('一个位置只能放一张图片。要一次放多张，请拖到页面的空白处，按尺寸自动整理。'); return; }
+  const lines = [];
+  for (const f of files) {
+    const qs = new URLSearchParams({ project, app: cur, name: f.name, ...(slot ? { slot, lang } : {}) });
+    try {
+      const r = await fetch('/api/images/drop?' + qs, { method: 'POST', body: f });
+      const j = await r.json();
+      lines.push(r.ok ? j.line : `✗ ${f.name}  ${j.error}`);
+    } catch (err) { lines.push(`✗ ${f.name}  ${err.message}`); }
+  }
+  if (!slot) {
+    // 放进待分类的只显示整理结果
+    try { const r = await api('/api/images/sort', P({ app: cur })); sortMsg = [...lines.filter((l) => l.startsWith('✗')), ...r.lines]; }
+    catch (err) { sortMsg = [...lines, '✗ 整理失败：' + err.message]; }
+  } else sortMsg = lines;
+  await load();
+  // 拖到某一格时结果显示在页面顶部，出错时额外弹窗，免得看不到
+  if (slot && lines.some((l) => l.startsWith('✗'))) alert(lines.join('\n'));
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  if (e.target.id === 'newpath') $('[data-addpath]').click();
+  if (e.target.id === 'new-appid' || e.target.id === 'new-name') $('[data-createproj]').click();
+});
 document.addEventListener('input', (e) => { if (e.target.id === 'filter') { filter = e.target.value; render(); } });
 
 const es = new EventSource('/api/events');
