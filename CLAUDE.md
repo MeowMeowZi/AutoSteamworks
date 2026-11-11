@@ -20,7 +20,7 @@ Steamworks **没有**修改商店页面的官方 API，所以一切都靠操作�
 | 商店页上的“下载本地化 / 上传本地化”（官方的 JSON/CSV 批量导入导出） | ⏳ 没研究，可以作为多语言文本的另一种同步方式 |
 
 **后台里现在有两项测试数据**，正式发布前要替换掉：schinese 简短描述是“测试测试”，schinese 形象图片是 `测试.png`。
-**代码还没有提交到 git**，用户还没回复要不要提交。
+代码已推送到公开仓库 https://github.com/MeowMeowZi/AutoSteamworks（main 分支）。`apps/` 和 `steam.config.yaml` 是这款游戏自己的内容，已加进 gitignore，不进工具仓库。
 
 ## 用户的项目
 
