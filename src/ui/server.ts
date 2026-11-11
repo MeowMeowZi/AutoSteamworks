@@ -7,10 +7,12 @@ import { loadConfig, selectApps, type AppConfig, type Config } from '../config.j
 import { openBrowser } from '../browser.js';
 import type { FieldValue } from '../partner/form.js';
 import { hasLocal, norm, readLocal, readSnapshot, splitLocalized, writeLocalField, type Fields } from '../local/storeFiles.js';
-import { assetStates, readManifest, scanAssets } from '../local/assetFiles.js';
 import { lint } from '../lint.js';
 import type { Change } from '../sync.js';
 import { assetsApp, diffApp, DRAFT_NOTE, pullApp, pushApp, type Log } from '../ops.js';
+import { readMeta } from '../partner/meta.js';
+import { describeField } from '../fieldInfo.js';
+import { imageBoard } from './images.js';
 
 type Action = 'pull' | 'diff' | 'push' | 'assets';
 interface RunReq { action: Action; app: string; only?: string[]; dryRun?: boolean; force?: boolean }
@@ -25,12 +27,12 @@ function parts(from: FieldValue | undefined, to: FieldValue | undefined) {
   return d.map((p) => ({ v: p.value, t: p.added ? 1 : p.removed ? -1 : 0 }));
 }
 
-function fieldView(key: string, local: Fields, base: Fields | undefined, remote: Map<string, Change> | undefined) {
+function fieldView(key: string, local: Fields, base: Fields | undefined, remote: Map<string, Change> | undefined, labels?: Record<string, string>) {
   const l = local[key], b = base?.[key];
   const edited = base ? !eq(l, b) : false;
   const r = remote?.get(key);
   return {
-    key, local: l, base: b, edited,
+    key, local: l, base: b, edited, info: describeField(key, labels?.[key.replace(/\[=.*\]$/, '')]),
     parts: edited ? parts(b, l) : undefined,
     remote: r && { kind: r.kind, value: r.remote, parts: parts(r.remote, l) },
   };
@@ -41,12 +43,16 @@ export async function startUi(configPath: string, port: number) {
   const remoteChecks = new Map<string, { at: string; changes: Map<string, Change> }>();
   const clients = new Set<ServerResponse>();
   let job: { action: Action; app: string; log: string[] } | undefined;
+  /** 上一个任务的结果，网页顶部显示成结果框 */
+  let lastResult: { app: string; action: Action; dryRun: boolean; ok: boolean; at: string; lines: string[] } | undefined;
 
   const cfg = (): Config => loadConfig(configPath);
   const send = (event: string, data: unknown) => {
     const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const c of clients) c.write(msg);
   };
+
+  const labelsOf = (c: Config, app: AppConfig) => readMeta(c, app)?.labels;
 
   function appState(c: Config, app: AppConfig) {
     const pulled = hasLocal(app) && !!readSnapshot(c, app);
@@ -56,25 +62,31 @@ export async function startUi(configPath: string, port: number) {
     const common: ReturnType<typeof fieldView>[] = [];
     const byPath = new Map<string, Record<string, ReturnType<typeof fieldView>>>();
     for (const key of Object.keys(local).sort()) {
-      const v = fieldView(key, local, base, remote?.changes);
+      const v = fieldView(key, local, base, remote?.changes, labelsOf(c, app));
       const loc = splitLocalized(key);
       if (!loc) { common.push(v); continue; }
       const row = byPath.get(loc.path) ?? {};
       row[loc.lang] = v;
       byPath.set(loc.path, row);
     }
-    const { assets, warnings } = scanAssets(app);
-    const manifest = readManifest(c, app);
+    const meta = readMeta(c, app);
+    const images = imageBoard(c, app, meta);
+    const issues = lint(app, local);
+    const edits = Object.keys(local).filter((k) => base && !eq(local[k], base[k]));
     return {
       key: app.key, appid: app.appid, name: app.name, languages: app.languages, pulled,
       storeDir: app.storeDir, assetsDir: app.assets.dir,
       common,
       localized: [...byPath].map(([path, langs]) => ({ path, langs })),
-      assets: assetStates(assets, manifest).map(({ asset, state }) => ({
-        rel: asset.rel, tab: asset.tab, lang: asset.lang, state, bytes: asset.bytes.length,
-        type: manifest[asset.rel]?.type, uploadedAt: manifest[asset.rel]?.uploadedAt,
-      })),
-      assetWarnings: warnings,
+      images,
+      /** 上次从后台读到状态的时间（拉取、对比、上传时都会更新） */
+      remoteAt: meta?.at,
+      summary: {
+        textEdits: edits.length,
+        imagesPending: images.pending.length,
+        errors: issues.filter((i) => i.level === 'error').length + images.issues.filter((i) => i.level === 'error').length,
+        warnings: issues.filter((i) => i.level === 'warn').length + images.issues.filter((i) => i.level === 'warn').length,
+      },
       lint: lint(app, local),
       remoteCheckedAt: remote?.at,
       /** 线上有、但本地没改的变化（本地改了的已经挂在字段上） */
@@ -84,7 +96,7 @@ export async function startUi(configPath: string, port: number) {
 
   function state() {
     const c = cfg();
-    return { config: resolve(configPath), job: job && { action: job.action, app: job.app }, apps: c.apps.map((a) => appState(c, a)) };
+    return { config: resolve(configPath), job: job && { action: job.action, app: job.app }, lastResult, apps: c.apps.map((a) => appState(c, a)) };
   }
 
   async function run(req: RunReq) {
@@ -123,6 +135,11 @@ export async function startUi(configPath: string, port: number) {
       log(`错误: ${e instanceof Error ? e.message : e}`);
     } finally {
       await ctx.close().catch(() => {});
+      lastResult = {
+        app: app.key, action: req.action, dryRun: !!req.dryRun, ok, at: new Date().toISOString(),
+        // 只保留结果行：成功、失败、警告、后台位置、提醒
+        lines: job!.log.map((l) => l.trim()).filter((l) => /^(✓|✗|⚠|→|后台位置|提醒|错误|跳过|没有需要|本地改动|尚未)/.test(l)),
+      };
       job = undefined;
       send('done', { ok });
       send('changed', null);

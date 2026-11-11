@@ -4,68 +4,132 @@
 <meta charset="utf-8">
 <title>AutoSteamworks</title>
 <style>
-  :root { --bg:#f5f6f8; --card:#fff; --line:#e3e6ea; --muted:#6b7280; --accent:#1a73e8; --add:#d9f7d9; --del:#fde2e2; --warn:#b45309; --err:#c62828; --ok:#2e7d32; }
-  * { box-sizing: border-box; }
-  body { margin:0; font:14px/1.5 "Microsoft YaHei", system-ui, sans-serif; background:var(--bg); color:#1f2328; }
-  header { display:flex; align-items:center; gap:16px; padding:10px 20px; background:#1b2838; color:#fff; position:sticky; top:0; z-index:5; }
+  :root {
+    --bg:#f4f5f7; --card:#fff; --line:#e2e5ea; --muted:#6b7280; --text:#1f2328;
+    --accent:#1a73e8; --accent-bg:#e8f0fe;
+    --ok:#1e7e34; --ok-bg:#e6f4ea; --warn:#9a5b00; --warn-bg:#fff4e0; --err:#c62828; --err-bg:#fdecea;
+    --info:#1565c0; --info-bg:#e3f2fd; --gray-bg:#eef0f3;
+    --add:#d4f5d4; --del:#fbdada;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.55 "Microsoft YaHei", system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  a { color:var(--accent); cursor:pointer; }
+  code, .mono { font-family:Consolas, "Microsoft YaHei", monospace; font-size:12px; }
+  header { display:flex; align-items:center; gap:16px; padding:10px 20px; background:#1b2838; color:#fff; position:sticky; top:0; z-index:10; height:48px; }
   header h1 { font-size:16px; margin:0; }
   header .cfg { color:#9fb3c8; font-size:12px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   header .job { font-size:13px; color:#ffd666; }
   .layout { display:flex; min-height:calc(100vh - 48px); }
-  nav { width:220px; flex:none; border-right:1px solid var(--line); background:var(--card); padding:12px 0; }
-  nav a { display:block; padding:8px 16px; color:inherit; text-decoration:none; cursor:pointer; }
-  nav a.on { background:#e8f0fe; color:var(--accent); font-weight:600; }
-  nav a small { color:var(--muted); display:block; font-size:12px; }
-  .badge { display:inline-block; min-width:18px; padding:0 6px; border-radius:9px; background:var(--accent); color:#fff; font-size:12px; text-align:center; margin-left:4px; }
-  .badge.gray { background:#9aa4b2; }
-  main { flex:1; padding:16px 24px 170px; min-width:0; }
-  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:12px; }
-  .tabs button { border:0; background:none; padding:8px 14px; cursor:pointer; font-size:14px; border-bottom:2px solid transparent; }
-  .tabs button.on { border-color:var(--accent); color:var(--accent); font-weight:600; }
-  .bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:12px; }
-  .bar .sp { flex:1; }
-  button.b { border:1px solid var(--line); background:var(--card); padding:5px 12px; border-radius:6px; cursor:pointer; font-size:13px; }
-  button.b:hover { border-color:var(--accent); }
+  nav { width:230px; flex:none; border-right:1px solid var(--line); background:var(--card); padding:12px 0; }
+  nav .app { display:block; padding:10px 16px; cursor:pointer; border-left:3px solid transparent; }
+  nav .app.on { background:var(--accent-bg); border-left-color:var(--accent); }
+  nav .app b { display:block; }
+  nav .app small { color:var(--muted); font-size:12px; }
+  nav .app .pills { margin-top:4px; display:flex; gap:4px; flex-wrap:wrap; }
+  main { flex:1; padding:16px 24px 120px; min-width:0; }
+
+  .pill { display:inline-block; font-size:12px; padding:1px 8px; border-radius:10px; background:var(--gray-bg); color:#4b5563; white-space:nowrap; }
+  .pill.ok { background:var(--ok-bg); color:var(--ok); } .pill.warn { background:var(--warn-bg); color:var(--warn); }
+  .pill.err { background:var(--err-bg); color:var(--err); } .pill.info { background:var(--info-bg); color:var(--info); }
+
+  button.b { border:1px solid #cfd4db; background:var(--card); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:13px; font-family:inherit; }
+  button.b:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
   button.b.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
-  button.b:disabled { opacity:.5; cursor:not-allowed; }
-  select { padding:4px 8px; border:1px solid var(--line); border-radius:6px; }
-  input[type=search] { padding:5px 10px; border:1px solid var(--line); border-radius:6px; width:220px; }
-  .note { color:var(--muted); font-size:12px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; margin-bottom:12px; }
-  .card > h3 { margin:0; padding:8px 12px; font-size:13px; font-family:Consolas, monospace; border-bottom:1px solid var(--line); background:#fafbfc; border-radius:8px 8px 0 0; }
+  button.b.primary:hover:not(:disabled) { background:#1557b0; color:#fff; }
+  button.b:disabled { opacity:.45; cursor:not-allowed; }
+  select, input[type=search] { padding:5px 10px; border:1px solid #cfd4db; border-radius:6px; font-family:inherit; font-size:13px; }
+  input[type=search] { width:220px; }
+  .muted { color:var(--muted); } .small { font-size:12px; }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .sp { flex:1; }
+
+  /* 概览 */
+  .overview { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 20px; margin-bottom:14px; }
+  .overview h2 { margin:0 0 2px; font-size:18px; }
+  .flow { display:flex; align-items:stretch; margin:14px 0 4px; }
+  .flow .step { flex:1; border:1px solid var(--line); padding:10px 14px; background:#fafbfc; }
+  .flow .step:first-child { border-radius:8px 0 0 8px; } .flow .step:nth-child(5) { border-radius:0 8px 8px 0; }
+  .flow .step + .arrow + .step { border-left:0; }
+  .flow .step .t { font-weight:600; font-size:13px; }
+  .flow .step .n { font-size:22px; font-weight:700; line-height:1.3; }
+  .flow .step .n.sm { font-size:15px; padding:4px 0; }
+  .flow .step .d { font-size:12px; color:var(--muted); }
+  .flow .arrow { display:flex; align-items:center; padding:0 6px; color:#9aa4b2; font-size:18px; }
+  .flow .step.hot { background:var(--info-bg); border-color:#bcd7f5; }
+  .flow .step.check { border-radius:8px; margin-left:16px; flex:0.8; }
+  .flow .step.bad { background:var(--err-bg); border-color:#f3c2c2; }
+
+  /* 结果框 */
+  .result { border-radius:10px; padding:12px 16px; margin-bottom:14px; border:1px solid; }
+  .result.ok { background:var(--ok-bg); border-color:#b7dfc1; } .result.fail { background:var(--err-bg); border-color:#f3c2c2; }
+  .result.dry { background:var(--info-bg); border-color:#bcd7f5; }
+  .result h3 { margin:0 0 6px; font-size:15px; }
+  .result ul { margin:0; padding-left:20px; } .result li { font-size:13px; }
+
+  .tabs { display:flex; gap:2px; border-bottom:1px solid var(--line); margin-bottom:14px; }
+  .tabs button { border:0; background:none; padding:9px 16px; cursor:pointer; font-size:14px; font-family:inherit; border-bottom:3px solid transparent; color:#374151; }
+  .tabs button.on { border-color:var(--accent); color:var(--accent); font-weight:600; }
+
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; margin-bottom:14px; overflow:hidden; }
+  .card > .hd { padding:10px 14px; border-bottom:1px solid var(--line); background:#fafbfc; display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  .card > .hd h3 { margin:0; font-size:15px; }
+  .card > .bd { padding:12px 14px; }
+  .where { font-size:12px; color:var(--muted); }
+  .where::before { content:'后台位置：'; }
+
+  .issues div { padding:3px 0; font-size:13px; }
+  .issues .error { color:var(--err); } .issues .warn { color:var(--warn); }
+
+  /* 文本 */
+  .textlayout { display:flex; gap:16px; align-items:flex-start; }
+  .subnav { width:150px; flex:none; position:sticky; top:64px; }
+  .subnav a { display:flex; justify-content:space-between; padding:7px 10px; border-radius:6px; color:inherit; text-decoration:none; }
+  .subnav a.on { background:var(--accent-bg); color:var(--accent); font-weight:600; }
+  .textmain { flex:1; min-width:0; }
+  .field { border-top:1px solid var(--line); }
+  .field:first-child { border-top:0; }
+  .field > .fh { padding:8px 14px 0; display:flex; align-items:baseline; gap:8px; }
+  .field > .fh b { font-size:14px; }
   .cols { display:grid; grid-template-columns:repeat(var(--n), minmax(0, 1fr)); }
-  .cell { padding:8px 12px; border-left:1px solid var(--line); min-width:0; }
+  .cell { padding:6px 14px 12px; border-left:1px solid var(--line); min-width:0; }
   .cell:first-child { border-left:0; }
-  .cell.edited { background:#f6fbff; }
-  .cell .head { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); margin-bottom:4px; }
-  .cell .head .sp { flex:1; }
-  .cell .head a { cursor:pointer; color:var(--accent); }
-  .val { white-space:pre-wrap; word-break:break-word; font-size:13px; max-height:360px; overflow:auto; }
-  .val.empty { color:#b0b7c3; font-style:italic; }
-  .val ins { background:var(--add); text-decoration:none; }
-  .val del { background:var(--del); }
-  .preview { font-size:13px; max-height:360px; overflow:auto; border:1px dashed var(--line); padding:6px 10px; }
+  .cell.edited { background:#f5faff; }
+  .cell .ch { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); margin-bottom:4px; min-height:22px; }
+  .val { white-space:pre-wrap; word-break:break-word; font-size:13px; max-height:340px; overflow:auto; }
+  .val.empty { color:#aab1bc; font-style:italic; }
+  .val ins { background:var(--add); text-decoration:none; } .val del { background:var(--del); }
+  .preview { margin-top:6px; font-size:13px; max-height:340px; overflow:auto; border:1px dashed var(--line); padding:6px 10px; border-radius:6px; }
   .preview h1 { font-size:18px; } .preview h2 { font-size:16px; } .preview h3 { font-size:14px; }
   .preview .img { display:inline-block; padding:2px 6px; background:#eef; color:#557; font-size:12px; }
-  textarea { width:100%; min-height:140px; font:13px/1.5 Consolas, "Microsoft YaHei", monospace; }
-  .tag { font-size:11px; padding:0 6px; border-radius:4px; background:#eef2f7; color:#4b5563; }
-  .tag.local { background:#e3f2fd; color:#1565c0; } .tag.remote { background:#fff3e0; color:#e65100; }
-  .tag.conflict { background:#fde2e2; color:var(--err); } .tag.gone { background:#eee; color:#555; }
-  .tag.new { background:#e3f2fd; color:#1565c0; } .tag.changed { background:#fff3e0; color:#e65100; } .tag.same { background:#e8f5e9; color:var(--ok); }
-  .lint { padding:8px 12px; }
-  .lint div { font-size:13px; }
-  .lint .error { color:var(--err); } .lint .warn { color:var(--warn); }
-  table.common { width:100%; border-collapse:collapse; font-size:13px; }
-  table.common td { border-top:1px solid var(--line); padding:6px 10px; vertical-align:top; }
-  table.common td.k { font-family:Consolas, monospace; width:40%; word-break:break-all; }
-  table.common tr.edited { background:#f6fbff; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:12px; }
-  .asset { background:var(--card); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
-  .asset img { width:100%; height:150px; object-fit:contain; background:#222; display:block; }
-  .asset .meta { padding:8px 10px; font-size:12px; }
-  .asset .meta b { font-family:Consolas, monospace; font-weight:normal; word-break:break-all; }
-  #log { position:fixed; left:220px; right:0; bottom:0; height:150px; background:#0d1117; color:#c9d1d9; font:12px/1.5 Consolas, monospace; padding:8px 16px; overflow:auto; white-space:pre-wrap; border-top:3px solid #1b2838; }
-  #log .t { color:#8b949e; }
+  textarea { width:100%; min-height:150px; font:13px/1.5 Consolas, "Microsoft YaHei", monospace; border:1px solid #cfd4db; border-radius:6px; padding:6px; }
+  table.kv { width:100%; border-collapse:collapse; font-size:13px; }
+  table.kv td { border-top:1px solid var(--line); padding:7px 14px; vertical-align:top; }
+  table.kv tr:first-child td { border-top:0; }
+  table.kv td.k { width:38%; }
+  table.kv td.k .mono { color:#9aa4b2; display:block; word-break:break-all; }
+  table.kv tr.edited { background:#f5faff; }
+
+  /* 图片 */
+  table.board { width:100%; border-collapse:collapse; table-layout:fixed; }
+  table.board th, table.board td { border-top:1px solid var(--line); padding:10px 12px; vertical-align:top; text-align:left; }
+  table.board thead th { background:#fafbfc; font-size:13px; border-top:0; }
+  table.board th.slot { width:200px; }
+  table.board th.slot b { font-size:14px; display:block; }
+  .thumbs { display:flex; gap:8px; }
+  .thumb { flex:1; min-width:0; }
+  .thumb .cap { font-size:11px; color:var(--muted); }
+  .thumb .box { height:92px; background:#1f2328; border-radius:6px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#8b949e; font-size:12px; text-align:center; padding:4px; }
+  .thumb .box img { max-width:100%; max-height:100%; object-fit:contain; display:block; }
+  .thumb .box.none { background:repeating-linear-gradient(45deg, #f3f4f6, #f3f4f6 6px, #eceef1 6px, #eceef1 12px); color:#9aa4b2; }
+  .cellfoot { margin-top:6px; font-size:12px; }
+  .cellfoot .fn { color:var(--muted); word-break:break-all; }
+  .shots { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:10px; }
+
+  /* 底部操作栏 + 日志 */
+  .actionbar { position:fixed; left:230px; right:0; bottom:34px; background:var(--card); border-top:1px solid var(--line); padding:10px 24px; display:flex; align-items:center; gap:10px; z-index:5; box-shadow:0 -2px 8px rgba(0,0,0,.05); }
+  #logbar { position:fixed; left:230px; right:0; bottom:0; height:34px; background:#0d1117; color:#c9d1d9; font-size:12px; display:flex; align-items:center; gap:10px; padding:0 16px; cursor:pointer; z-index:6; overflow:hidden; white-space:nowrap; }
+  #log { position:fixed; left:230px; right:0; bottom:34px; height:260px; margin:0; background:#0d1117; color:#c9d1d9; font:12px/1.5 Consolas, monospace; padding:8px 16px; overflow:auto; white-space:pre-wrap; z-index:7; border-top:2px solid #30363d; display:none; }
+  body.logopen #log { display:block; }
   .empty-state { padding:40px; text-align:center; color:var(--muted); }
 </style>
 </head>
@@ -75,23 +139,26 @@
   <nav id="nav"></nav>
   <main id="main"><div class="empty-state">加载中…</div></main>
 </div>
-<div id="log"><span class="t">日志：在这里显示拉取、对比、上传的过程。本地文件改动会自动刷新页面。</span>
-</div>
+<div class="actionbar" id="actionbar" style="display:none"></div>
+<pre id="log"></pre>
+<div id="logbar"><span id="logstate">▸ 日志</span><span class="muted" id="loglast"></span></div>
 <script>
 const $ = (s, el = document) => el.querySelector(s);
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-const KIND = { local: '本地改动', remote: '线上改动', conflict: '冲突', gone: '线上已删除' };
-const ASSET_STATE = { new: '新增', changed: '已修改', same: '已上传' };
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const LANG = { english: '英语', schinese: '简体中文', tchinese: '繁体中文', japanese: '日语', koreana: '韩语', '*': '所有语言' };
+const langName = (l) => LANG[l] || l;
+const KIND = { local: ['本地改动', 'info'], remote: ['后台被改过', 'warn'], conflict: ['冲突：两边都改了', 'err'], gone: ['后台已没有这个字段', 'err'] };
+const ACTION = { pull: '从后台拉取', diff: '刷新后台状态', push: '上传文本', assets: '上传图片' };
+const CELL_PILL = { pending: 'info', synced: 'ok', uploaded: 'ok', lost: 'err', 'remote-only': 'warn', 'missing-required': 'err', fallback: '', empty: '' };
 
-let S = null;               // 服务器返回的状态
+let S = null;
 let cur = localStorage.appKey || null;
 let tab = localStorage.tab || 'text';
-let view = localStorage.view || 'filled'; // edited | filled | all
-let showPreview = false;
-let filter = '';
-let editing = null;         // 正在编辑的字段 key
-const picked = new Set();   // 勾选要上传的字段 key / 图片 rel
-const unpicked = new Set(); // 用户手动取消勾选的（默认全选改动）
+let subtab = localStorage.subtab || '描述';
+let view = localStorage.view || 'filled';
+let showPreview = false, filter = '', editing = null;
+let resultSeen = localStorage.resultSeen || '';
+const picked = new Set(), unpicked = new Set();
 
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -99,30 +166,31 @@ async function api(path, body) {
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
-
 async function load() {
   S = await api('/api/state');
   if (!S.apps.find((a) => a.key === cur)) cur = S.apps[0]?.key;
   render();
 }
+const app = () => S.apps.find((a) => a.key === cur);
+const ago = (t) => {
+  if (!t) return '从未读取';
+  const m = Math.round((Date.now() - new Date(t)) / 60000);
+  return (m < 1 ? '刚刚' : m < 60 ? `${m} 分钟前` : m < 1440 ? `${Math.round(m / 60)} 小时前` : new Date(t).toLocaleString()) + '读取';
+};
 
-function app() { return S.apps.find((a) => a.key === cur); }
-
-/** 所有本地字段（扁平） */
 function allFields(a) {
   const out = [...a.common];
   for (const row of a.localized) for (const f of Object.values(row.langs)) out.push(f);
   return out;
 }
-function editedFields(a) { return allFields(a).filter((f) => f.edited); }
-function pendingAssets(a) { return a.assets.filter((x) => x.state !== 'same'); }
-function isPicked(id, def) { return picked.has(id) || (def && !unpicked.has(id)); }
-function setPick(id, on, def) {
-  if (on) { picked.add(id); unpicked.delete(id); } else { picked.delete(id); if (def) unpicked.add(id); }
-  render();
-}
+const editedFields = (a) => allFields(a).filter((f) => f.edited);
+const defPick = (f) => f.remote?.kind !== 'conflict';
+const isPicked = (id, def) => picked.has(id) || (def && !unpicked.has(id));
+function setPick(id, on, def) { if (on) { picked.add(id); unpicked.delete(id); } else { picked.delete(id); if (def) unpicked.add(id); } }
+const selectedFields = (a) => editedFields(a).filter((f) => isPicked(f.key, defPick(f)));
+const selectedImages = (a) => a.images.pending.filter((rel) => isPicked('asset:' + rel, true));
 
-// ---- BBCode 预览（只做常用标签，够看排版就行） ----
+// ---- BBCode 预览 ----
 function bbcode(src) {
   let h = esc(src);
   const rep = [
@@ -132,154 +200,272 @@ function bbcode(src) {
     [/\[url=([^\]]+)\]([\s\S]*?)\[\/url\]/gi, '<a href="$1" target="_blank" rel="noreferrer">$2</a>'],
     [/\[img[^\]]*\]([\s\S]*?)\[\/img\]/gi, '<span class="img">图片 $1</span>'],
     [/\[hr\]\s*(\[\/hr\])?/gi, '<hr>'],
-    [/\[list\]/gi, '<ul>'], [/\[\/list\]/gi, '</ul>'], [/\[olist\]/gi, '<ol>'], [/\[\/olist\]/gi, '</ol>'],
-    [/\[\*\]/g, '<li>'],
+    [/\[list\]/gi, '<ul>'], [/\[\/list\]/gi, '</ul>'], [/\[olist\]/gi, '<ol>'], [/\[\/olist\]/gi, '</ol>'], [/\[\*\]/g, '<li>'],
   ];
   for (const [re, to] of rep) h = h.replace(re, to);
   return h.replace(/\n/g, '<br>');
 }
-
-function valueHtml(f) {
+const showVal = (v) => typeof v === 'boolean' ? (v ? '✔ 是' : '✘ 否') : v === '' || v === undefined ? '' : String(v);
+function diffHtml(f) {
   if (f.parts) return f.parts.map((p) => p.t > 0 ? `<ins>${esc(p.v)}</ins>` : p.t < 0 ? `<del>${esc(p.v)}</del>` : esc(p.v)).join('');
-  if (f.local === '' ) return '';
-  return esc(typeof f.local === 'boolean' ? (f.local ? '✔ 是' : '✘ 否') : f.local);
+  return esc(showVal(f.local));
 }
 
-function fieldCell(a, f, label) {
-  if (!f) return `<div class="cell"><div class="head">${esc(label)}</div><div class="val empty">（本地没有这个字段）</div></div>`;
+// ================= 概览 =================
+function renderOverview(a) {
+  const s = a.summary;
+  const toUpload = s.textEdits + s.imagesPending;
+  return `<div class="overview">
+    <div class="row"><div><h2>${esc(a.name || a.key)}</h2>
+      <span class="muted small">App ${a.appid} · 同步语言：${a.languages.map(langName).join('、')}</span></div>
+      <span class="sp"></span>
+      <span class="small muted">后台状态：${ago(a.remoteAt)}</span>
+      <button class="b" data-run="diff" title="读一次后台，看看后台现在是什么样（不会修改任何东西）">刷新后台状态</button>
+      <button class="b" data-run="pull" title="把后台内容下载到本地。本地有没上传的改动时不会覆盖">从后台拉取</button>
+    </div>
+    <div class="flow">
+      <div class="step ${toUpload ? 'hot' : ''}"><div class="t">① 本地文件</div>
+        <div class="n">${toUpload || '✓'}</div>
+        <div class="d">${toUpload ? `待上传：文本 ${s.textEdits} 处、图片 ${s.imagesPending} 张` : '没有待上传的改动'}</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="t">② 后台草稿</div>
+        <div class="n sm">在本页底部点“上传”</div>
+        <div class="d">保存为草稿，商店上还看不到</div></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="t">③ 发布上线</div>
+        <div class="n sm">在 Steamworks 后台手动发布</div>
+        <div class="d">商店页管理 → 发布页签，审核后上线</div></div>
+      <div class="step check ${s.errors ? 'bad' : ''}"><div class="t">规则检查</div>
+        <div class="n">${s.errors || s.warnings ? `${s.errors ? `<span style="color:var(--err)">${s.errors} 错误</span> ` : ''}${s.warnings ? `<span style="color:var(--warn);font-size:16px">${s.warnings} 提醒</span>` : ''}` : '✓'}</div>
+        <div class="d">${s.errors || s.warnings ? '<a data-tab="issues">查看问题</a>' : '没有发现问题'}</div></div>
+    </div>
+  </div>`;
+}
+
+function renderResult(a) {
+  const r = S.lastResult;
+  if (!r || r.app !== a.key || resultSeen === r.at) return '';
+  const title = !r.ok ? `${ACTION[r.action]}失败` : r.dryRun ? `${ACTION[r.action]}：演练完成（没有真正上传）` : `${ACTION[r.action]}完成`;
+  const cls = !r.ok ? 'fail' : r.dryRun ? 'dry' : 'ok';
+  return `<div class="result ${cls}"><div class="row"><h3>${!r.ok ? '✗' : '✓'} ${esc(title)}</h3><span class="sp"></span>
+    <span class="small muted">${new Date(r.at).toLocaleTimeString()}</span> <a data-dismiss="${esc(r.at)}">关闭</a></div>
+    ${r.lines.length ? `<ul>${r.lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}
+    ${r.ok && !r.dryRun && (r.action === 'push' || r.action === 'assets') ? '<div class="small" style="margin-top:6px">已保存为后台草稿。在 Steamworks 后台的“发布”页签发布后，商店上才会看到。</div>' : ''}
+    ${!r.ok ? '<div class="small" style="margin-top:6px"><a data-openlog>打开完整日志</a></div>' : ''}
+  </div>`;
+}
+
+// ================= 文本 =================
+const TABS = ['描述', '基本信息', '抢先体验', '特别设置', '其他'];
+const TAB_WHERE = { 描述: '商店页管理 → 描述', 基本信息: '商店页管理 → 基本信息', 抢先体验: '商店页管理 → 抢先体验', 特别设置: '商店页管理 → 特别设置', 其他: '' };
+const shown = (f) => view === 'all' || f.edited || f.remote || (view === 'filled' && f.local !== '' && f.local !== false);
+const matches = (f) => !filter || [f.info.label, f.info.group, f.key, String(f.local)].some((x) => x.toLowerCase().includes(filter.toLowerCase()));
+
+function textRows(a) {
+  // 本地化字段：一行 = 一个 path，各语言并排；通用字段：一行一个
+  const rows = [];
+  for (const r of a.localized) rows.push({ info: Object.values(r.langs)[0].info, loc: r, fields: Object.values(r.langs) });
+  for (const f of a.common) rows.push({ info: f.info, field: f, fields: [f] });
+  return rows;
+}
+
+function fieldCell(a, f, lang) {
+  if (!f) return `<div class="cell"><div class="ch">${langName(lang)}</div><div class="val empty">（本地没有这个字段）</div></div>`;
   const kind = f.remote?.kind || (f.edited ? 'local' : null);
-  const def = f.edited && kind !== 'conflict';
-  const head = `<div class="head">
-      ${f.edited ? `<input type="checkbox" data-pick="${esc(f.key)}" data-def="${def ? 1 : 0}" ${isPicked(f.key, def) ? 'checked' : ''} title="勾选后上传">` : ''}
-      <b>${esc(label)}</b>${kind ? `<span class="tag ${kind}">${KIND[kind]}</span>` : ''}
-      ${typeof f.local === 'string' ? `<span>${[...f.local].length} 字</span>` : ''}
+  const head = `<div class="ch">
+      ${f.edited ? `<input type="checkbox" data-pick="${esc(f.key)}" data-def="${defPick(f) ? 1 : 0}" ${isPicked(f.key, defPick(f)) ? 'checked' : ''} title="勾选后上传">` : ''}
+      <b style="color:#374151">${langName(lang)}</b>${kind ? `<span class="pill ${KIND[kind][1]}">${KIND[kind][0]}</span>` : ''}
+      ${typeof f.local === 'string' && f.local ? `<span>${f.local.length} 字</span>` : ''}
       <span class="sp"></span>
       ${typeof f.local === 'string' ? `<a data-edit="${esc(f.key)}">编辑</a>` : ''}
       ${f.edited && f.base !== undefined ? `<a data-revert="${esc(f.key)}">还原</a>` : ''}
     </div>`;
   if (editing === f.key) {
     return `<div class="cell edited">${head}<textarea id="ed">${esc(f.local)}</textarea>
-      <div class="bar"><button class="b primary" data-save="${esc(f.key)}">保存到本地</button><button class="b" data-cancel>取消</button></div></div>`;
+      <div class="row" style="margin-top:6px"><button class="b primary" data-save="${esc(f.key)}">保存到本地文件</button><button class="b" data-cancel>取消</button></div></div>`;
   }
-  let body = f.local === '' ? '<div class="val empty">（空）</div>' : `<div class="val">${valueHtml(f)}</div>`;
+  let body = f.local === '' ? '<div class="val empty">（空）</div>' : `<div class="val">${diffHtml(f)}</div>`;
   if (showPreview && typeof f.local === 'string' && f.local) body += `<div class="preview">${bbcode(f.local)}</div>`;
-  if (f.remote && f.remote.kind !== 'local') {
-    body += `<div class="note">线上现在的值：</div><div class="val">${f.remote.value === undefined ? '（无）' : esc(f.remote.value)}</div>`;
-  }
+  if (f.remote && f.remote.kind !== 'local') body += `<div class="small muted" style="margin-top:6px">后台现在的值：</div><div class="val">${f.remote.value === undefined ? '（无）' : esc(showVal(f.remote.value))}</div>`;
   return `<div class="cell ${f.edited ? 'edited' : ''}">${head}${body}</div>`;
 }
 
-function matches(text) { return !filter || text.toLowerCase().includes(filter.toLowerCase()); }
-
 function renderText(a) {
-  if (!a.pulled) return `<div class="empty-state">还没有拉取过这个 App 的商店内容。<br><br><button class="b primary" data-run="pull">从后台拉取</button></div>`;
-  const edited = editedFields(a);
-  const sel = edited.filter((f) => isPicked(f.key, f.remote?.kind !== 'conflict'));
-  const conflicts = sel.filter((f) => f.remote?.kind === 'conflict').length;
-  let h = `<div class="bar">
-    <button class="b" data-run="pull" title="本地有未上传的改动时不会覆盖">拉取</button>
-    <button class="b" data-run="diff">和线上对比</button>
-    <span class="note">${a.remoteCheckedAt ? '上次对比：' + new Date(a.remoteCheckedAt).toLocaleString() : '还没和线上对比过（上传时会自动对比）'}</span>
+  if (!a.pulled) return `<div class="empty-state">还没有从后台拉取过这个 App 的商店内容。<br><br><button class="b primary" data-run="pull">从后台拉取</button></div>`;
+  const all = textRows(a);
+  const rows = all.filter((r) => r.fields.some(shown) && r.fields.some(matches));
+  const count = (t) => all.filter((r) => r.info.tab === t && r.fields.some((f) => f.edited)).length;
+  const visible = (t) => rows.filter((r) => r.info.tab === t).length;
+  if (!visible(subtab) && !count(subtab)) subtab = TABS.find((t) => visible(t)) || subtab;
+
+  let h = `<div class="row" style="margin-bottom:12px">
+    <select id="view">${[['edited', '只看改动'], ['filled', '有内容的字段'], ['all', '全部字段（包括空的）']].map(([v, t]) => `<option value="${v}" ${view === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+    <label class="small"><input type="checkbox" id="preview" ${showPreview ? 'checked' : ''}> BBCode 预览</label>
+    <input type="search" id="filter" placeholder="搜索字段名或内容" value="${esc(filter)}">
     <span class="sp"></span>
-    <select id="view">${[['edited', '只看改动'], ['filled', '有内容的字段'], ['all', '全部字段']].map(([v, t]) => `<option value="${v}" ${view === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
-    <label><input type="checkbox" id="preview" ${showPreview ? 'checked' : ''}> BBCode 预览</label>
-    <input type="search" id="filter" placeholder="搜索字段或内容" value="${esc(filter)}">
-  </div>
-  <div class="bar">
-    <span>本地改动 <b>${edited.length}</b> 处，已选 <b>${sel.length}</b> 处</span>
-    <a class="note" style="cursor:pointer" data-pickall="1">全选</a><a class="note" style="cursor:pointer" data-pickall="0">全不选</a>
-    <span class="sp"></span>
-    <button class="b" data-push="dry" ${sel.length ? '' : 'disabled'}>演练</button>
-    <button class="b primary" data-push="real" ${sel.length ? '' : 'disabled'}>上传选中的 ${sel.length} 处${conflicts ? `（含 ${conflicts} 处冲突）` : ''}</button>
+    <span class="small muted">和上次同步时相比：<ins style="background:var(--add);text-decoration:none">新加的</ins> / <del style="background:var(--del)">删掉的</del></span>
   </div>`;
+  const remoteOnly = a.remoteOnly || [];
+  if (remoteOnly.length) h += `<div class="card"><div class="bd issues"><div class="warn">⚠ 后台有 ${remoteOnly.length} 个字段被改过，本地还是旧的。先点上面的“从后台拉取”再编辑，否则上传时会跳过这些字段。</div></div></div>`;
 
-  if (a.lint.length) {
-    h += `<div class="card"><h3>规则检查（${a.lint.length}）</h3><div class="lint">${a.lint.map((i) =>
-      `<div class="${i.level}">${i.level === 'error' ? '✗' : '⚠'} <code>${esc(display(i.key))}</code> ${esc(i.msg)}</div>`).join('')}</div></div>`;
-  }
-  if (a.remoteOnly.length) {
-    h += `<div class="card"><h3>线上有改动、本地没改（${a.remoteOnly.length}）</h3><div class="lint"><div class="warn">这些字段在后台被改过，先“拉取”再编辑，否则上传时会跳过。</div>${a.remoteOnly.map((k) => `<div><code>${esc(display(k))}</code></div>`).join('')}</div></div>`;
-  }
+  h += `<div class="textlayout"><div class="subnav">${TABS.filter((t) => visible(t) || count(t)).map((t) =>
+    `<a data-subtab="${t}" class="${t === subtab ? 'on' : ''}"><span>${t}</span>${count(t) ? `<span class="pill info">${count(t)} 改动</span>` : `<span class="muted small">${visible(t)}</span>`}</a>`).join('')}</div><div class="textmain">`;
 
+  const mine = rows.filter((r) => r.info.tab === subtab);
+  if (!mine.length) h += `<div class="empty-state">${view === 'edited' ? '这里没有改动。左上角切换成“有内容的字段”可以浏览内容。' : '没有匹配的字段'}</div>`;
+  const groups = [...new Set(mine.map((r) => r.info.group))];
+  const isPrimary = (g) => mine.some((r) => r.info.group === g && r.info.primary);
+  groups.sort((x, y) => Number(!isPrimary(x)) - Number(!isPrimary(y)));
+  for (const g of groups) {
+    const gr = mine.filter((r) => r.info.group === g);
+    h += `<div class="card"><div class="hd"><h3>${esc(g)}</h3>${TAB_WHERE[subtab] ? `<span class="where">${esc(TAB_WHERE[subtab])}</span>` : ''}</div>`;
+    for (const r of gr.filter((r) => r.loc)) {
+      h += `<div class="field"><div class="fh"><b>${esc(r.info.label)}</b><span class="mono muted">${esc(r.loc.path)}</span></div>
+        <div class="cols" style="--n:${a.languages.length}">${a.languages.map((l) => fieldCell(a, r.loc.langs[l], l)).join('')}</div></div>`;
+    }
+    const com = gr.filter((r) => r.field);
+    if (com.length) {
+      h += `<table class="kv">${com.map(({ field: f }) => {
+        const kind = f.remote?.kind || (f.edited ? 'local' : null);
+        return `<tr class="${f.edited ? 'edited' : ''}"><td class="k">
+          ${f.edited ? `<input type="checkbox" data-pick="${esc(f.key)}" data-def="${defPick(f) ? 1 : 0}" ${isPicked(f.key, defPick(f)) ? 'checked' : ''}> ` : ''}
+          ${esc(f.info.label)} ${kind ? `<span class="pill ${KIND[kind][1]}">${KIND[kind][0]}</span>` : ''}<span class="mono">${esc(f.key)}</span></td>
+          <td><div class="val">${f.edited ? `<del>${esc(showVal(f.base))}</del> → <ins>${esc(showVal(f.local))}</ins>` : esc(showVal(f.local)) || '<span class="muted">（空）</span>'}</div></td></tr>`;
+      }).join('')}</table>`;
+    }
+    h += `</div>`;
+  }
+  return h + `</div></div>`;
+}
+
+// ================= 图片 =================
+function thumb(cap, url, emptyText) {
+  return `<div class="thumb">${cap ? `<div class="cap">${cap}</div>` : ''}${url
+    ? `<div class="box"><img loading="lazy" src="${esc(url)}" onerror="this.parentNode.textContent='缩略图加载失败'"></div>`
+    : `<div class="box none">${emptyText}</div>`}</div>`;
+}
+const localUrl = (a, rel, v) => `/api/asset?app=${encodeURIComponent(a.key)}&rel=${encodeURIComponent(rel)}&v=${v}`;
+
+function imgCell(a, slot, lang, span) {
+  const c = slot.cells[lang];
+  const id = c.local && 'asset:' + c.local.rel;
+  const pick = c.status === 'pending' ? `<input type="checkbox" data-pick="${esc(id)}" data-def="1" ${isPicked(id, true) ? 'checked' : ''} title="勾选后上传"> ` : '';
+  return `<td ${span ? `colspan="${span}"` : ''}><div class="thumbs" ${span ? 'style="max-width:420px"' : ''}>
+      ${thumb('本地', c.local && localUrl(a, c.local.rel, c.local.bytes), '本地没有')}
+      ${thumb('后台', c.remoteUrl, a.remoteAt ? '后台没有' : '还没读取<br>点“刷新后台状态”')}
+    </div>
+    <div class="cellfoot">${pick}<span class="pill ${CELL_PILL[c.status]}">${esc(c.text)}</span>
+      ${c.local ? `<div class="fn">${esc(c.local.rel)}${c.local.size ? ' · ' + c.local.size : ''}${c.local.uploadedAt ? ' · 上传于 ' + new Date(c.local.uploadedAt).toLocaleString() : ''}</div>` : ''}
+      ${c.extra.length ? `<div class="fn" style="color:var(--warn)">⚠ 同一位置还有：${c.extra.map(esc).join('、')}</div>` : ''}
+    </div></td>`;
+}
+
+function renderBoard(a, tabId, dir, title, where) {
+  const slots = a.images.slots.filter((s) => s.tab === tabId);
   const langs = a.languages;
-  let rows = a.localized;
-  const shown = (f) => view === 'all' || f.edited || f.remote || (view === 'filled' && f.local !== '' && f.local !== false);
-  rows = rows.filter((r) => Object.values(r.langs).some(shown));
-  rows = rows.filter((r) => matches(r.path) || Object.values(r.langs).some((f) => typeof f.local === 'string' && matches(f.local)));
-  for (const r of rows) {
-    h += `<div class="card"><h3>${esc(r.path)}</h3><div class="cols" style="--n:${langs.length}">${langs.map((l) => fieldCell(a, r.langs[l], l)).join('')}</div></div>`;
+  let h = `<div class="card"><div class="hd"><h3>${title}</h3><span class="where">${where}</span>
+    <span class="sp"></span><span class="small muted">文件放在 <code>assets/${dir}/&lt;语言&gt;/</code>，按尺寸自动对应到下面的位置，文件名随意</span></div>
+    <table class="board"><thead><tr><th class="slot">位置</th>${langs.map((l) => `<th>${langName(l)} <span class="mono muted">${l}</span></th>`).join('')}</tr></thead><tbody>`;
+  for (const s of slots) {
+    h += `<tr><th class="slot"><b>${esc(s.label)}${s.required ? ' <span style="color:var(--err)">*</span>' : ''}</b>
+      <span class="small muted">${s.width} × ${s.height}${s.match === 'contained' ? '（宽或高一致即可）' : ''}</span>
+      ${s.required ? '<div class="small" style="color:var(--err)">必填</div>' : ''}
+      ${s.localized ? '' : '<div class="small muted">不分语言</div>'}</th>`;
+    h += s.localized ? langs.map((l) => imgCell(a, s, l)).join('') : imgCell(a, s, '*', langs.length);
+    h += '</tr>';
   }
-  let common = a.common;
-  common = common.filter(shown);
-  common = common.filter((f) => matches(f.key) || matches(String(f.local)));
-  if (common.length) {
-    h += `<div class="card"><h3>通用字段（_common.yaml）</h3><table class="common">${common.map((f) => `<tr class="${f.edited ? 'edited' : ''}">
-      <td class="k">${f.edited ? `<input type="checkbox" data-pick="${esc(f.key)}" data-def="${f.remote?.kind === 'conflict' ? 0 : 1}" ${isPicked(f.key, f.remote?.kind !== 'conflict') ? 'checked' : ''}> ` : ''}${esc(f.key)}
-        ${f.remote ? `<span class="tag ${f.remote.kind}">${KIND[f.remote.kind]}</span>` : f.edited ? '<span class="tag local">本地改动</span>' : ''}</td>
-      <td><div class="val">${f.edited ? `<del>${esc(f.base)}</del> → <ins>${esc(f.local)}</ins>` : esc(f.local)}</div></td></tr>`).join('')}</table></div>`;
-  }
-  if (!rows.length && !common.length) h += `<div class="empty-state">${view === 'edited' ? '本地没有改动。右上角切换成“有内容的字段”可以浏览内容。' : '没有匹配的字段'}</div>`;
+  return h + '</tbody></table></div>';
+}
+
+function renderImages(a) {
+  const im = a.images;
+  let h = '';
+  if (im.issues.length) h += `<div class="card"><div class="hd"><h3>需要注意</h3></div><div class="bd issues">${im.issues.map((i) => `<div class="${i.level}">${i.level === 'error' ? '✗' : '⚠'} ${esc(i.msg)}</div>`).join('')}</div></div>`;
+  if (!a.remoteAt) h += `<div class="card"><div class="bd issues"><div class="warn">还没读取过后台状态，所以“后台”一栏是空的。点上面的“刷新后台状态”读取一次（只读，不会修改后台）。</div></div></div>`;
+  h += `<div class="small muted" style="margin:0 0 10px">提示：后台会把上传的图片改名（例如 <code>header_schinese.jpg</code>），在后台要按“位置 + 语言”找，不要按原文件名找。后台列表里点语言名才会显示图片。</div>`;
+  h += renderBoard(a, 'store', 'store', '商店宣传图', '商店页管理 → 图像资产 → 商店资产');
+  h += renderBoard(a, 'library', 'library', '库资源', '商店页管理 → 图像资产 → 库资产');
+  const sh = im.screenshots;
+  h += `<div class="card"><div class="hd"><h3>截图</h3><span class="where">${esc(sh.where)}</span><span class="sp"></span>
+    <span class="small muted">本地 ${sh.local.length} 张 · 后台 ${sh.remoteCount ?? '未知'} 张 · 至少 1920 × 1080，所有语言共用</span></div><div class="bd">`;
+  h += sh.local.length ? `<div class="shots">${sh.local.map((x) => {
+    const id = 'asset:' + x.rel, pending = x.state !== 'same';
+    return `<div>${thumb('', localUrl(a, x.rel, x.bytes))}<div class="cellfoot">${pending ? `<input type="checkbox" data-pick="${esc(id)}" data-def="1" ${isPicked(id, true) ? 'checked' : ''}> ` : ''}
+      <span class="pill ${pending ? 'info' : 'ok'}">${pending ? '待上传' : '已上传'}</span><div class="fn">${esc(x.rel)} · ${x.size}</div></div></div>`;
+  }).join('')}</div>` : '<div class="muted small">本地没有截图。放到 <code>assets/screenshots/</code> 下。</div>';
+  h += `<div class="small muted" style="margin-top:8px">改过的截图会作为新截图上传，旧的要在后台手动删除。</div></div></div>`;
   return h;
 }
 
-function renderAssets(a) {
-  const pend = pendingAssets(a);
-  const sel = a.assets.filter((x) => isPicked('asset:' + x.rel, x.state !== 'same'));
-  let h = `<div class="bar"><span>图片目录：<code>${esc(a.assetsDir)}</code></span><span class="sp"></span>
-    <span>待上传 <b>${pend.length}</b>，已选 <b>${sel.length}</b></span>
-    <button class="b" data-assets="dry" ${sel.length ? '' : 'disabled'}>演练（识别类型）</button>
-    <button class="b primary" data-assets="real" ${sel.length ? '' : 'disabled'}>上传选中的 ${sel.length} 张</button></div>`;
-  if (a.assetWarnings.length) h += `<div class="card"><div class="lint">${a.assetWarnings.map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join('')}</div></div>`;
-  if (!a.assets.length) return h + `<div class="empty-state">没有图片。放到 <code>store/&lt;语言&gt;/</code>、<code>library/&lt;语言&gt;/</code>、<code>screenshots/</code> 下，按尺寸自动识别类型。</div>`;
-  const groups = [['store', '商店宣传图'], ['library', '库资源'], ['screenshot', '截图']];
-  for (const [t, title] of groups) {
-    const items = a.assets.filter((x) => x.tab === t);
-    if (!items.length) continue;
-    h += `<h3>${title}</h3><div class="grid">${items.map((x) => {
-      const id = 'asset:' + x.rel;
-      return `<div class="asset"><img loading="lazy" src="/api/asset?app=${encodeURIComponent(a.key)}&rel=${encodeURIComponent(x.rel)}&v=${x.bytes}">
-        <div class="meta"><label><input type="checkbox" data-pick="${esc(id)}" data-def="${x.state !== 'same' ? 1 : 0}" ${isPicked(id, x.state !== 'same') ? 'checked' : ''}>
-        <b>${esc(x.rel)}</b></label><br><span class="tag ${x.state}">${ASSET_STATE[x.state]}</span>
-        ${x.lang ? `<span class="tag">${esc(x.lang)}</span>` : ''} ${x.type ? `<span class="tag">${esc(x.type)}</span>` : ''}
-        <span class="note">${(x.bytes / 1024).toFixed(0)} KB${x.uploadedAt ? ' · ' + new Date(x.uploadedAt).toLocaleString() : ''}</span></div></div>`;
-    }).join('')}</div>`;
-  }
-  return h;
+// ================= 问题 =================
+function fieldLabel(a, key) {
+  const f = allFields(a).find((x) => x.key === key);
+  const m = key.match(/\]\[([a-z]+)\]$/);
+  return f ? `${f.info.label}${m ? `（${langName(m[1])}）` : ''}` : key;
+}
+function renderIssues(a) {
+  const all = [...a.lint.map((i) => ({ ...i, where: `文本 · ${fieldLabel(a, i.key)}` })), ...a.images.issues.map((i) => ({ ...i, where: '图片' }))];
+  all.sort((x, y) => (x.level === 'error' ? 0 : 1) - (y.level === 'error' ? 0 : 1));
+  if (!all.length) return '<div class="empty-state">✓ 没有发现问题</div>';
+  return `<div class="card"><div class="bd issues">${all.map((i) => `<div class="${i.level}">${i.level === 'error' ? '✗' : '⚠'} <b>${esc(i.where)}</b>：${esc(i.msg)}</div>`).join('')}</div></div>
+    <div class="small muted">规则来源：Steam 后台页面上的限制（例如简短描述 200-300 字）和图片尺寸规则。</div>`;
 }
 
-function display(key) {
-  const m = key.match(/^app\[(.+)\]\[([a-z]+)\]$/);
-  if (!m) return key;
-  const p = m[1].split('][');
-  return `${m[2]}/${p[0] === 'content' ? p.slice(1).join('.') : 'app.' + p.join('.')}`;
+// ================= 底部操作栏 =================
+function renderActionBar(a) {
+  const bar = $('#actionbar');
+  if (!a || (!a.pulled && tab === 'text') || tab === 'issues') { bar.style.display = 'none'; return; }
+  const busy = !!S.job;
+  if (tab === 'text') {
+    const sel = selectedFields(a), conflicts = sel.filter((f) => f.remote?.kind === 'conflict').length;
+    bar.innerHTML = `<span>文本改动 <b>${editedFields(a).length}</b> 处，已勾选 <b>${sel.length}</b> 处${conflicts ? `（其中 ${conflicts} 处冲突，会用本地覆盖后台）` : ''}</span>
+      <a class="small" data-pickall="1">全选</a><a class="small" data-pickall="0">全不选</a><span class="sp"></span>
+      <button class="b" data-push="dry" ${sel.length && !busy ? '' : 'disabled'} title="打开后台对比一遍，显示会改什么，不真正保存">演练</button>
+      <button class="b primary" data-push="real" ${sel.length && !busy ? '' : 'disabled'}>上传 ${sel.length} 处到后台草稿</button>`;
+  } else {
+    const sel = selectedImages(a);
+    bar.innerHTML = `<span>图片待上传 <b>${a.images.pending.length}</b> 张，已勾选 <b>${sel.length}</b> 张</span><span class="sp"></span>
+      <button class="b" data-assets="dry" ${sel.length && !busy ? '' : 'disabled'} title="让后台按尺寸识别类型，不真正上传">演练</button>
+      <button class="b primary" data-assets="real" ${sel.length && !busy ? '' : 'disabled'}>上传 ${sel.length} 张到后台草稿</button>`;
+  }
+  bar.style.display = 'flex';
 }
 
 function render() {
   $('#cfg').textContent = S.config;
-  $('#job').textContent = S.job ? `⏳ 正在执行 ${S.job.action}（${S.job.app}）…` : '';
+  $('#job').textContent = S.job ? `⏳ 正在${ACTION[S.job.action]}（${S.job.app}）…` : '';
   $('#nav').innerHTML = S.apps.map((a) => {
-    const n = editedFields(a).length, m = pendingAssets(a).length;
-    return `<a data-app="${esc(a.key)}" class="${a.key === cur ? 'on' : ''}">${esc(a.name || a.key)}
-      ${n ? `<span class="badge" title="文本改动">${n}</span>` : ''}${m ? `<span class="badge gray" title="待上传图片">${m}</span>` : ''}
-      <small>${esc(a.key)} · ${a.appid} · ${a.languages.join(', ')}</small></a>`;
+    const s = a.summary;
+    return `<div class="app ${a.key === cur ? 'on' : ''}" data-app="${esc(a.key)}"><b>${esc(a.name || a.key)}</b>
+      <small>${esc(a.key)} · ${a.appid}</small>
+      <div class="pills">${s.textEdits ? `<span class="pill info">文本 ${s.textEdits}</span>` : ''}${s.imagesPending ? `<span class="pill info">图片 ${s.imagesPending}</span>` : ''}${s.errors ? `<span class="pill err">${s.errors} 错误</span>` : ''}</div></div>`;
   }).join('');
   const a = app();
   if (!a) { $('#main').innerHTML = '<div class="empty-state">配置里没有 App</div>'; return; }
   const focus = document.activeElement?.id;
-  const busy = !!S.job;
-  $('#main').innerHTML = `<div class="tabs">
-      <button data-tab="text" class="${tab === 'text' ? 'on' : ''}">商店文本 ${editedFields(a).length ? `<span class="badge">${editedFields(a).length}</span>` : ''}</button>
-      <button data-tab="assets" class="${tab === 'assets' ? 'on' : ''}">图片 ${pendingAssets(a).length ? `<span class="badge gray">${pendingAssets(a).length}</span>` : ''}</button>
-    </div>` + (tab === 'text' ? renderText(a) : renderAssets(a));
-  if (busy) document.querySelectorAll('[data-run],[data-push],[data-assets]').forEach((b) => b.disabled = true);
+  const s = a.summary;
+  $('#main').innerHTML = renderOverview(a) + renderResult(a) + `<div class="tabs">
+      <button data-tab="text" class="${tab === 'text' ? 'on' : ''}">商店文本 ${s.textEdits ? `<span class="pill info">${s.textEdits}</span>` : ''}</button>
+      <button data-tab="images" class="${tab === 'images' ? 'on' : ''}">图片 ${s.imagesPending ? `<span class="pill info">${s.imagesPending}</span>` : ''}</button>
+      <button data-tab="issues" class="${tab === 'issues' ? 'on' : ''}">问题 ${s.errors ? `<span class="pill err">${s.errors}</span>` : s.warnings ? `<span class="pill warn">${s.warnings}</span>` : ''}</button>
+    </div>` + (tab === 'text' ? renderText(a) : tab === 'images' ? renderImages(a) : renderIssues(a));
+  renderActionBar(a);
+  if (S.job) document.querySelectorAll('[data-run]').forEach((b) => b.disabled = true);
   if (focus === 'filter') { const f = $('#filter'); f.focus(); f.setSelectionRange(f.value.length, f.value.length); }
 }
 
+// ---- 日志 ----
 function log(line) {
   const el = $('#log');
   el.append(document.createTextNode(line + '\n'));
   el.scrollTop = el.scrollHeight;
+  if (line.trim()) $('#loglast').textContent = line.trim().slice(0, 140);
 }
+function setLog(open) {
+  document.body.classList.toggle('logopen', open);
+  $('#logstate').textContent = open ? '▾ 日志（点这里收起）' : '▸ 日志';
+}
+$('#logbar').addEventListener('click', () => setLog(!document.body.classList.contains('logopen')));
 
 async function run(body, confirmText) {
   if (confirmText && !confirm(confirmText)) return;
@@ -287,40 +473,41 @@ async function run(body, confirmText) {
 }
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-app],[data-tab],[data-run],[data-push],[data-assets],[data-edit],[data-revert],[data-save],[data-cancel],[data-pickall]');
+  const t = e.target.closest('[data-app],[data-tab],[data-subtab],[data-run],[data-push],[data-assets],[data-edit],[data-revert],[data-save],[data-cancel],[data-pickall],[data-dismiss],[data-openlog]');
   if (!t) return;
   const a = app();
-  if (t.dataset.app) { cur = localStorage.appKey = t.dataset.app; editing = null; render(); }
-  else if (t.dataset.tab) { tab = localStorage.tab = t.dataset.tab; render(); }
-  else if (t.dataset.run) run({ action: t.dataset.run });
-  else if (t.dataset.push) {
-    const sel = editedFields(a).filter((f) => isPicked(f.key, f.remote?.kind !== 'conflict'));
-    const conflicts = sel.filter((f) => f.remote?.kind === 'conflict').length;
-    const dry = t.dataset.push === 'dry';
+  const d = t.dataset;
+  if (d.app) { cur = localStorage.appKey = d.app; editing = null; render(); }
+  else if (d.tab) { tab = localStorage.tab = d.tab; render(); }
+  else if (d.subtab) { subtab = localStorage.subtab = d.subtab; render(); }
+  else if (d.run) run({ action: d.run });
+  else if (d.push) {
+    const sel = selectedFields(a), conflicts = sel.filter((f) => f.remote?.kind === 'conflict').length;
+    const dry = d.push === 'dry';
     run({ action: 'push', only: sel.map((f) => f.key), dryRun: dry, force: conflicts > 0 },
-      dry ? null : `把 ${sel.length} 处改动保存到 Steamworks 后台？\n${conflicts ? `其中 ${conflicts} 处是冲突，会以本地为准覆盖线上。\n` : ''}保存的是草稿，不点发布就不会上线。`);
-  } else if (t.dataset.assets) {
-    const sel = a.assets.filter((x) => isPicked('asset:' + x.rel, x.state !== 'same')).map((x) => x.rel);
-    const dry = t.dataset.assets === 'dry';
-    run({ action: 'assets', only: sel, dryRun: dry }, dry ? null : `上传 ${sel.length} 张图片到 Steamworks 后台？\n会替换后台同类型、同语言的图片（截图会新增一张）。保存的是草稿。`);
-  } else if (t.dataset.edit) { editing = t.dataset.edit; render(); $('#ed')?.focus(); }
-  else if (t.dataset.cancel !== undefined) { editing = null; render(); }
-  else if (t.dataset.save) {
-    try { await api('/api/field', { app: cur, key: t.dataset.save, value: $('#ed').value }); editing = null; await load(); } catch (err) { alert(err.message); }
-  } else if (t.dataset.revert) {
-    const f = allFields(a).find((x) => x.key === t.dataset.revert);
-    if (confirm(`把 ${display(f.key)} 还原成上次同步时的值？`)) {
+      dry ? null : `把 ${sel.length} 处文本改动上传到 Steamworks 后台？\n\n${sel.slice(0, 8).map((f) => '· ' + fieldLabel(a, f.key)).join('\n')}${sel.length > 8 ? '\n…' : ''}\n\n${conflicts ? `其中 ${conflicts} 处是冲突，会用本地内容覆盖后台。\n` : ''}保存为草稿，不在后台点发布就不会上线。`);
+  } else if (d.assets) {
+    const sel = selectedImages(a), dry = d.assets === 'dry';
+    run({ action: 'assets', only: sel, dryRun: dry },
+      dry ? null : `上传 ${sel.length} 张图片到 Steamworks 后台？\n\n${sel.map((r) => '· ' + r).join('\n')}\n\n会替换后台同位置、同语言的图片（截图会新增一张）。保存为草稿，不在后台点发布就不会上线。`);
+  } else if (d.edit) { editing = d.edit; render(); $('#ed')?.focus(); }
+  else if (d.cancel !== undefined) { editing = null; render(); }
+  else if (d.save) {
+    try { await api('/api/field', { app: cur, key: d.save, value: $('#ed').value }); editing = null; await load(); } catch (err) { alert(err.message); }
+  } else if (d.revert) {
+    const f = allFields(a).find((x) => x.key === d.revert);
+    if (confirm(`把“${fieldLabel(a, f.key)}”还原成上次同步时的内容？`)) {
       try { await api('/api/field', { app: cur, key: f.key, value: f.base }); await load(); } catch (err) { alert(err.message); }
     }
-  } else if (t.dataset.pickall) {
-    const on = t.dataset.pickall === '1';
-    for (const f of editedFields(a)) setPick(f.key, on, f.remote?.kind !== 'conflict');
-  }
+  } else if (d.pickall) {
+    for (const f of editedFields(a)) setPick(f.key, d.pickall === '1', defPick(f));
+    render();
+  } else if (d.dismiss) { resultSeen = localStorage.resultSeen = d.dismiss; render(); }
+  else if (d.openlog !== undefined) setLog(true);
 });
-
 document.addEventListener('change', (e) => {
   const t = e.target;
-  if (t.dataset.pick) setPick(t.dataset.pick, t.checked, t.dataset.def === '1');
+  if (t.dataset.pick) { setPick(t.dataset.pick, t.checked, t.dataset.def === '1'); render(); }
   else if (t.id === 'view') { view = localStorage.view = t.value; render(); }
   else if (t.id === 'preview') { showPreview = t.checked; render(); }
 });
@@ -328,8 +515,8 @@ document.addEventListener('input', (e) => { if (e.target.id === 'filter') { filt
 
 const es = new EventSource('/api/events');
 es.addEventListener('log', (e) => log(JSON.parse(e.data)));
-es.addEventListener('job', (e) => { const j = JSON.parse(e.data); S.job = j; render(); log(''); });
-es.addEventListener('done', (e) => { S.job = null; render(); log(JSON.parse(e.data).ok ? '— 完成 —' : '— 有错误，见上面的输出 —'); });
+es.addEventListener('job', (e) => { S.job = JSON.parse(e.data); log(''); setLog(true); render(); });
+es.addEventListener('done', () => { S.job = null; setLog(false); load(); });
 // 编辑中不自动刷新，免得冲掉正在输入的内容
 es.addEventListener('changed', () => { if (!editing) load(); });
 

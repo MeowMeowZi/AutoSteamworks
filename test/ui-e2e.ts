@@ -108,6 +108,7 @@ try {
   await runJob({ action: 'diff' });
   a = await game();
   assert.ok(a.remoteCheckedAt);
+  assert.ok(a.remoteAt, '对比时顺便保存了后台状态');
   assert.deepEqual(a.remoteOnly, ['app[content][links][website]']);
   assert.equal(field(a, 'english', 'about').remote.kind, 'local');
 
@@ -137,14 +138,32 @@ try {
   };
   put('store/english/header.png', png(920, 430));
   put('store/english/small.png', png(462, 174));
+  put('store/english/bad.png', png(100, 100));
   a = await game();
-  assert.deepEqual(a.assets.map((x: any) => [x.rel, x.state]), [['store/english/header.png', 'new'], ['store/english/small.png', 'new']]);
+  const cell = (x: any, slot: string, lang: string) => x.images.slots.find((s: any) => s.id === slot).cells[lang];
+  assert.equal(cell(a, 'header', 'english').status, 'pending');
+  assert.equal(cell(a, 'header', 'english').local.size, '920x430', '离线按尺寸识别');
+  assert.equal(cell(a, 'header', 'schinese').status, 'fallback', '非英语没有图时提示会显示英文版');
+  assert.equal(cell(a, 'main_capsule', 'english').status, 'missing-required');
+  assert.ok(a.images.issues.some((i: any) => i.level === 'error' && /主宣传图、竖向宣传图/.test(i.msg) && !/形象图片/.test(i.msg)), '缺少英文必填图');
+  assert.ok(a.images.issues.some((i: any) => /bad\.png.*100x100/.test(i.msg)), '尺寸不对的图报错');
+  assert.deepEqual(a.images.pending, ['store/english/header.png', 'store/english/small.png'], '尺寸不对的图不算待上传');
+  assert.equal(a.summary.imagesPending, 2);
   const img = await fetch(origin + '/api/asset?app=game&rel=store/english/header.png');
   assert.equal(img.headers.get('content-type'), 'image/png');
+
   await runJob({ action: 'assets', only: ['store/english/small.png'] });
   assert.deepEqual(srv.uploads.map((u) => u.filename), ['small.png']);
   a = await game();
-  assert.deepEqual(a.assets.map((x: any) => x.state), ['new', 'same']);
+  assert.equal(cell(a, 'small_capsule', 'english').status, 'synced', '上传后自动读取后台状态并核对');
+  assert.match(cell(a, 'small_capsule', 'english').remoteUrl, /h1\/small\.png$/);
+  assert.equal(cell(a, 'header', 'english').status, 'pending');
+  const lr = (await get('/api/state')).lastResult;
+  assert.ok(lr.ok && lr.lines.some((l: string) => l.startsWith('后台位置：商店页管理 → 图像资产 → 商店资产 → 小宣传图 → english')), '结果框写明后台位置');
+
+  // 字段显示成后台上的名字
+  assert.equal(field(a, 'english', 'short_description').info.label, '简短描述');
+  assert.equal(field(a, 'english', 'short_description').info.tab, '描述');
 
   ok = true;
   console.log('\n✓ 后台网页测试全部通过');

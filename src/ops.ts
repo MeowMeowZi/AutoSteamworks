@@ -7,6 +7,8 @@ import { fetchRemote, pushStore } from './partner/store.js';
 import { hasLocal, readLocal, readSnapshot, splitLocalized, writeLocal, writeSnapshot } from './local/storeFiles.js';
 import { localEdits, threeWay, type Change } from './sync.js';
 import { openAssetsPage, uploadAssets } from './partner/assets.js';
+import { saveRemoteMeta } from './partner/meta.js';
+import { SLOTS } from './slots.js';
 import { assetStates, readManifest, scanAssets, writeManifest } from './local/assetFiles.js';
 
 export type Log = (line: string) => void;
@@ -46,6 +48,7 @@ export async function pullApp(page: Page, c: Config, app: AppConfig, o: { force?
     }
   }
   const fields = await fetchRemote(page, c, app);
+  await saveRemoteMeta(page, c, app);
   writeLocal(app, fields);
   writeSnapshot(c, app, fields);
   log(`  ✓ ${Object.keys(fields).length} 个字段 → ${app.storeDir}`);
@@ -56,7 +59,9 @@ export async function pullApp(page: Page, c: Config, app: AppConfig, o: { force?
 export async function diffApp(page: Page, c: Config, app: AppConfig): Promise<Change[] | undefined> {
   const base = readSnapshot(c, app);
   if (!hasLocal(app) || !base) return undefined;
-  return threeWay(readLocal(app), await fetchRemote(page, c, app), base);
+  const remote = await fetchRemote(page, c, app);
+  await saveRemoteMeta(page, c, app);
+  return threeWay(readLocal(app), remote, base);
 }
 
 export interface PushOpts {
@@ -85,6 +90,7 @@ export async function pushApp(page: Page, c: Config, app: AppConfig, o: PushOpts
   if (o.dryRun) return { failed: false, pushed: false };
 
   const r = await pushStore(page, c, app, toPush.map((ch) => [ch.key, ch.local!]));
+  await saveRemoteMeta(page, c, app); // pushStore 最后停在重新加载的编辑页上
   // 只把成功保存的字段写进快照；其他字段保持原来的基准，否则会误把线上改动当成本地改动
   const snap = { ...base };
   for (const k of r.saved) snap[k] = r.after[k];
@@ -138,8 +144,10 @@ export async function assetsApp(page: Page, c: Config, app: AppConfig, o: Assets
       continue;
     }
     const where = s.asset.lang && r.key?.endsWith('|' + s.asset.lang) ? ` [${s.asset.lang}]` : '';
+    const slot = SLOTS.find((x) => x.label === r.type);
     log(`  ${o.dryRun ? '→' : '✓'} ${r.rel}${note}  ${r.type} ${r.size}${where}${r.verified ? '（已核对）' : ''}`);
     if (r.warning) log(`      ⚠ ${r.warning}`);
+    if (slot && !o.dryRun) log(`      后台位置：${slot.where}${slot.localized && s.asset.lang ? ' → ' + s.asset.lang : ''}（后台会把文件改名，不显示原文件名）`);
     if (o.dryRun) continue;
     pushed = true;
     manifest[r.rel] = { hash: s.asset.hash, type: r.type, uploadedAt: new Date().toISOString() };
@@ -147,7 +155,10 @@ export async function assetsApp(page: Page, c: Config, app: AppConfig, o: Assets
       log('      ⚠ 截图改动会作为一张新截图上传，旧的那张需要在后台手动删除');
     }
   }
-  if (!o.dryRun) writeManifest(c, app, manifest);
+  if (!o.dryRun) {
+    writeManifest(c, app, manifest);
+    if (pushed) { await openAssetsPage(page, c, app); await saveRemoteMeta(page, c, app); }
+  }
   return { failed, pushed };
 }
 

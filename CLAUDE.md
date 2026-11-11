@@ -42,6 +42,9 @@ Steamworks **没有**修改商店页面的官方 API，所以一切都靠操作�
   - 请求 key = 类型路径 [+ `|<lang>`]；截图的 key 是 `screenshot|assets|screenshots|0|english[]`，另外带 `params[<文件名>][all_ages]`，文件名里插入 `.AA1`。
   - POST 到 `save/<itemid>?activetab=tab_graphicalassets&json=1`。成功时返回 `{"redirect":"...SuccessMsg[0]=Changes+saved..."}`，失败时 redirect 地址里带 `ErrorMsg`。
 - **会话**：页面有长连接，`networkidle` 永远等不到。统一用 `src/browser.ts` 里的 `settle()`：等 load，再最多等 5 秒网络空闲。
+- **图片槽位**（2026-11-11 读 g_ImageTypes 和 IsImageTypeValid）：一般要求尺寸完全一致；库徽标宽或高一致即可；截图只要求不小于 1920x1080。没有类型开启 supports2x。商店的 4 张宣传图是必填（后台标 *），后台顶部“商店资产 0/4 已添加”只按英文版计数。
+- **后台显示已上传图片的方式**：后台把文件改名为 `header_schinese.jpg` 之类，列表里只有“简体中文 920 x 430 新”这样一行，点语言名才显示图片。图片 CDN 是 `https://shared.cdn.queniuqe.com/store_item_assets/steam/apps/<appid>/<hash>/<文件名>`（从页面链接里读到）。用户曾因此以为上传失败，网页上要写清楚后台位置。
+- **抢先体验问题的中文原文**、复选框文字等见 src/fieldInfo.ts 和 .autosw/inspect/field-labels.json。
 - **App 管理首页**：`/apps/landing/<appid>`，上面有各后台页面的链接，探查新功能时可以从这里开始。
 
 ## 代码结构
@@ -59,7 +62,12 @@ src/local/assetFiles.ts    扫描 assets/{store,library}/<语言>/、assets/scre
 src/ops.ts                 pull / diff / push / assets 的核心流程，命令行和网页共用（输出走 log 回调）
 src/lint.ts                规则检查（简短描述长度、BBCode 闭合、未翻译）
 src/ui/server.ts           `ui` 命令的 HTTP 服务：/api/state、/api/run（同一时间只跑一个任务）、/api/field、SSE /api/events（轮询文件 mtime）
-src/ui/page.html           网页，原生 JS，不需要构建
+src/ui/page.html           网页，原生 JS，不需要构建。概览（本地 → 草稿 → 发布）、结果框、文本按后台页签分组、图片按槽位 × 语言排成表
+src/ui/images.ts           图片表的数据：每格的本地文件、后台路径、状态（待上传 / 已在后台 / 缺少必填…）
+src/slots.ts               后台图片槽位表（照抄 g_ImageTypes）和按尺寸识别（照抄 IsImageTypeValid）
+src/fieldInfo.ts           字段名 → 后台页签 / 分组 / 中文名
+src/partner/meta.ts        后台状态快照（serialized_app_data.assets、CDN 前缀、复选框文字），pull/diff/push/assets 时保存到 .autosw/remote/
+src/local/imageSize.ts     离线读 PNG/JPEG/GIF/WebP 尺寸
 templates/STEAM_RULES.md   `init` 复制到游戏项目里，给 AI 看的规则
 src/sync.ts                三方对比（本地 / 线上 / 快照）：local / remote / conflict / gone
 src/build/steampipe.ts     生成 VDF + 调用 steamcmd
