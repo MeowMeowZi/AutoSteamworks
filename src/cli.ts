@@ -4,13 +4,14 @@ import { Command } from 'commander';
 import type { Page } from 'playwright-core';
 import { loadConfig, selectApps, type AppConfig, type Config } from './config.js';
 import { openBrowser } from './browser.js';
-import { ensureGitignore } from './projects.js';
+import { ensureAiPointer, ensureGitignore } from './projects.js';
 import { loadStorePage, storeEditUrl } from './partner/store.js';
 import { hasLocal, readLocal, readSnapshot, splitLocalized } from './local/storeFiles.js';
 import { localEdits } from './sync.js';
 import { lint } from './lint.js';
 import { runBuild } from './build/steampipe.js';
-import { assetsApp, diffApp, loginFlow, pullApp, display, DRAFT_NOTE, preview, printChange, pushApp } from './ops.js';
+import { SLOTS } from './slots.js';
+import { assetsApp, deleteImagesApp, diffApp, loginFlow, pullApp, display, DRAFT_NOTE, preview, printChange, pushApp } from './ops.js';
 
 const program = new Command('autosw')
   .description('把本地文件同步到 Steamworks 后台')
@@ -45,6 +46,7 @@ program.command('init').description('在当前目录生成示例配置 steam.con
     copyFileSync(src, dst);
     console.log(`已生成 ${dst}`);
   }
+  for (const f of ensureAiPointer(process.cwd())) console.log(`已在 ${f} 里加了指向 STEAM_RULES.md 的说明`);
   if (ensureGitignore(process.cwd())) console.log('已把 .autosw/ 加进 .gitignore');
   console.log('请在 steam.config.yaml 里填入 appid，在 STEAM_RULES.md 末尾填写本项目的风格和术语表');
 });
@@ -156,6 +158,21 @@ program.command('assets [apps...]').description('上传新增或改过的图片�
       uploaded ||= r.pushed;
     });
     if (uploaded) console.log('\n' + DRAFT_NOTE);
+    process.exitCode = failed ? 1 : 0;
+  });
+
+program.command('delete-image <app> <targets...>')
+  .description(`从后台删除图片（本地文件不动）。位置写成 <槽位>|<语言>，例如 "header|schinese"、"page_background|*"。槽位：${SLOTS.filter((s) => s.id !== 'screenshot').map((s) => `${s.id}=${s.label}`).join('，')}`)
+  .option('-n, --dry-run', '只在后台页面上找到删除链接，不删除')
+  .option('--headed', '显示浏览器窗口')
+  .action(async (key: string, targets: string[], o) => {
+    let failed = false, deleted = false;
+    await eachApp([key], !!o.headed, async (page, app, c) => {
+      const r = await deleteImagesApp(page, c, app, { targets, dryRun: !!o.dryRun }, log);
+      failed ||= r.failed;
+      deleted ||= r.pushed;
+    });
+    if (deleted) console.log('\n' + DRAFT_NOTE);
     process.exitCode = failed ? 1 : 0;
   });
 

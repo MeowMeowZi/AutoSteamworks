@@ -9,16 +9,16 @@ import type { FieldValue } from '../partner/form.js';
 import { hasLocal, norm, readLocal, readSnapshot, splitLocalized, STEAM_LANGS, writeLocalField, type Fields } from '../local/storeFiles.js';
 import { lint } from '../lint.js';
 import type { Change } from '../sync.js';
-import { assetsApp, diffApp, DRAFT_NOTE, loginFlow, pullApp, pushApp, type Log } from '../ops.js';
+import { assetsApp, deleteImagesApp, diffApp, DRAFT_NOTE, loginFlow, pullApp, pushApp, type Log } from '../ops.js';
 import { readMeta } from '../partner/meta.js';
 import { describeField, LANG_NAMES } from '../fieldInfo.js';
 import { imageBoard } from './images.js';
 import {
-  addProject, initProject, listProjects, projectSummary, readRules, readSettings, removeProject, requireProject, writeRules, writeSettings,
+  addProject, initProject, listProjects, projectSummary, aiPrompt, readRules, readSettings, removeProject, requireProject, upgradeRules, writeRules, writeSettings,
 } from '../projects.js';
 import { createShortcuts, isWindows, pickFolder } from '../desktop.js';
 
-type Action = 'pull' | 'diff' | 'push' | 'assets' | 'login';
+type Action = 'pull' | 'diff' | 'push' | 'assets' | 'delete-images' | 'login';
 interface RunReq { project: string; action: Action; app: string; only?: string[]; dryRun?: boolean; force?: boolean }
 
 const eq = (a?: FieldValue, b?: FieldValue) => (a === undefined || b === undefined ? a === b : norm(a) === norm(b));
@@ -141,7 +141,7 @@ export async function startUi(o: UiOptions) {
       } else {
         const { ctx, page } = await openBrowser(c, true);
         try {
-          log(`■ ${app!.key} (${app!.appid}) ${({ pull: '拉取', diff: '刷新后台状态', push: '上传文本', assets: '上传图片' })[req.action]}${req.dryRun ? '（演练）' : ''}`);
+          log(`■ ${app!.key} (${app!.appid}) ${({ pull: '拉取', diff: '刷新后台状态', push: '上传文本', assets: '上传图片', 'delete-images': '删除后台图片' })[req.action]}${req.dryRun ? '（演练）' : ''}`);
           const rk = project + '|' + app!.key;
           if (req.action === 'pull') {
             ok = await pullApp(page, c, app!, { force: req.force }, log);
@@ -157,7 +157,9 @@ export async function startUi(o: UiOptions) {
           } else {
             const r = req.action === 'push'
               ? await pushApp(page, c, app!, { dryRun: req.dryRun, force: req.force, only: req.only }, log)
-              : await assetsApp(page, c, app!, { dryRun: req.dryRun, force: req.force, only: req.only }, log);
+              : req.action === 'delete-images'
+                ? await deleteImagesApp(page, c, app!, { targets: req.only ?? [], dryRun: req.dryRun }, log)
+                : await assetsApp(page, c, app!, { dryRun: req.dryRun, force: req.force, only: req.only }, log);
             ok = !r.failed;
             if (r.pushed) {
               log(DRAFT_NOTE);
@@ -177,7 +179,7 @@ export async function startUi(o: UiOptions) {
         project, app: app?.key ?? '', action: req.action, dryRun: !!req.dryRun, ok, at: new Date().toISOString(),
         needLogin: lines.some((l) => /未登录或已过期/.test(l)),
         // 只保留结果行：成功、失败、警告、后台位置、提醒
-        lines: lines.filter((l) => /^(✓|✗|⚠|→|后台位置|提醒|错误|跳过|没有需要|本地改动|尚未)/.test(l)),
+        lines: lines.filter((l) => /^(✓|✗|⚠|→|后台位置|本地文件|提醒|错误|跳过|没有需要|本地改动|尚未)/.test(l)),
       };
       job = undefined;
       send('done', { ok });
@@ -273,6 +275,8 @@ export async function startUi(o: UiOptions) {
           return json(res, 200, readSettings(requireProject(q('project'))));
         case 'GET /api/rules':
           return json(res, 200, readRules(requireProject(q('project'))));
+        case 'GET /api/rules/prompt':
+          return json(res, 200, { text: aiPrompt(requireProject(q('project'))) });
       }
 
       if (req.method !== 'POST') return json(res, 404, { error: 'not found' });
@@ -303,6 +307,11 @@ export async function startUi(o: UiOptions) {
           writeRules(requireProject(b.project), b.text);
           touched();
           return json(res, 200, { ok: true });
+        case '/api/rules/upgrade': {
+          const text = upgradeRules(requireProject(b.project));
+          touched();
+          return json(res, 200, { text });
+        }
         case '/api/field': {
           const { app } = appOf(b.project, b.app);
           if (typeof b.value !== 'string' && typeof b.value !== 'boolean') return json(res, 400, { error: 'value 必须是字符串或布尔值' });
@@ -312,7 +321,7 @@ export async function startUi(o: UiOptions) {
         }
         case '/api/run': {
           const r = b as RunReq;
-          if (!['pull', 'diff', 'push', 'assets', 'login'].includes(r.action)) return json(res, 400, { error: '未知操作' });
+          if (!['pull', 'diff', 'push', 'assets', 'delete-images', 'login'].includes(r.action)) return json(res, 400, { error: '未知操作' });
           if (job) return json(res, 409, { error: `正在执行 ${job.action}，请等它结束` });
           if (r.action !== 'login') appOf(r.project, r.app); // 先校验项目和 App
           else if (r.project) requireProject(r.project);

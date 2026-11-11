@@ -167,7 +167,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 const LANG = { english: '英语', schinese: '简体中文', tchinese: '繁体中文', japanese: '日语', koreana: '韩语', '*': '所有语言' };
 const langName = (l) => LANG[l] || l;
 const KIND = { local: ['本地改动', 'info'], remote: ['后台被改过', 'warn'], conflict: ['冲突：两边都改了', 'err'], gone: ['后台已没有这个字段', 'err'] };
-const ACTION = { pull: '从后台拉取', diff: '刷新后台状态', push: '上传文本', assets: '上传图片', login: '登录 Steam' };
+const ACTION = { pull: '从后台拉取', diff: '刷新后台状态', push: '上传文本', assets: '上传图片', 'delete-images': '删除后台图片', login: '登录 Steam' };
 const CELL_PILL = { pending: 'info', synced: 'ok', uploaded: 'ok', lost: 'err', 'remote-only': 'warn', 'missing-required': 'err', fallback: '', empty: '' };
 
 let S = null;
@@ -397,6 +397,7 @@ function imgCell(a, slot, lang, span) {
     <div class="cellfoot">${pick}<span class="pill ${CELL_PILL[c.status]}">${esc(c.text)}</span>
       ${c.local ? `<div class="fn">${esc(c.local.rel)}${c.local.size ? ' · ' + c.local.size : ''}${c.local.uploadedAt ? ' · 上传于 ' + new Date(c.local.uploadedAt).toLocaleString() : ''}</div>` : ''}
       ${c.extra.length ? `<div class="fn" style="color:var(--warn)">⚠ 同一位置还有：${c.extra.map(esc).join('、')}</div>` : ''}
+      ${c.remoteUrl ? `<div class="fn"><a href="#" data-delimg="${esc(slot.id + '|' + lang)}" data-dellabel="${esc(slot.label + (slot.localized ? '（' + langName(lang) + '）' : ''))}" style="color:var(--err)">从后台删除</a></div>` : ''}
     </div></td>`;
 }
 
@@ -585,12 +586,27 @@ async function loadRules() { rules = await api('/api/rules?project=' + encodeURI
 function renderRules() {
   if (!rules || rulesFor !== project) { loadRules(); return '<div class="empty-state">加载中…</div>'; }
   return `<div class="overview"><h2>AI 规则</h2>
-    <div class="muted small">让 AI（例如 Claude Code）修改商店内容时，它会读这个文件：里面有文件布局、Steam 的规则和 AI 必须遵守的约定（只改本地文件、不上传）。
-    最后一节“本项目的风格”请自己填：语气、术语表、不要出现的词。</div>
-    <div class="small" style="margin-top:6px">用法：在游戏项目文件夹里打开 AI，说“按 STEAM_RULES.md 把简短描述翻译成英文”。AI 改完文件，这个网页会自动显示改动，你看完再勾选上传。</div>
+    <div class="muted small">给 AI（例如 Claude Code）看的规则：配置怎么写、商店文本和图片放在哪里、Steam 的规则，以及 AI 必须遵守的约定（只改本地文件，不上传）。
+    最后一节“本项目的风格”可以让 AI 根据项目资料填写，你再确认。</div>
+    <div class="small" style="margin-top:8px"><b>用法</b>：点“复制给 AI”，在游戏项目文件夹里打开 AI（例如 Claude Code），粘贴后发送。
+    AI 会按规则准备配置、商店文本和图片，需要你提供的信息会直接问你。它改完文件，这个网页会自动显示改动，你看完再勾选上传。</div>
+    <div class="row" style="margin-top:8px"><button class="b primary" data-copyprompt>复制给 AI</button><span class="small muted" id="prompt-msg"></span></div>
+    ${rules.outdated ? `<div class="small" style="margin-top:8px;color:#b45309">这个项目的规则文件是旧版本。点“升级到最新规则”会替换通用部分，“本项目的风格”一节保留不变。
+      <button class="b" data-upgraderules>升级到最新规则</button></div>` : ''}
     <div class="mono muted small" style="margin-top:4px">${esc(rules.path)}${rules.exists ? '' : '（还不存在，保存后创建）'}</div></div>
     <textarea class="rules" id="rules">${esc(rules.text)}</textarea>
     <div class="row" style="margin-top:8px"><button class="b primary" data-saverules>保存</button><span class="small muted" id="rules-msg"></span></div>`;
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {}
+  // 剪贴板接口不可用时（例如不是 localhost 访问）退回旧办法
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  const ok = document.execCommand('copy');
+  ta.remove();
+  return ok;
 }
 
 // ================= 总渲染 =================
@@ -669,7 +685,7 @@ async function run(body, confirmText) {
 }
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-app],[data-tab],[data-subtab],[data-run],[data-push],[data-assets],[data-edit],[data-revert],[data-save],[data-cancel],[data-pickall],[data-dismiss],[data-openlog],[data-login],[data-quit],[data-page],[data-openproj],[data-removeproj],[data-pickfolder],[data-addpath],[data-init],[data-shortcut],[data-savesettings],[data-resetsettings],[data-addapp],[data-delapp],[data-saverules]');
+  const t = e.target.closest('[data-app],[data-tab],[data-subtab],[data-run],[data-push],[data-assets],[data-edit],[data-revert],[data-save],[data-cancel],[data-pickall],[data-dismiss],[data-openlog],[data-login],[data-quit],[data-page],[data-openproj],[data-removeproj],[data-pickfolder],[data-addpath],[data-init],[data-shortcut],[data-savesettings],[data-resetsettings],[data-addapp],[data-delapp],[data-saverules],[data-copyprompt],[data-upgraderules],[data-delimg]');
   if (!t) return;
   const a = app();
   const d = t.dataset;
@@ -686,6 +702,14 @@ document.addEventListener('click', async (e) => {
     const sel = selectedImages(a), dry = d.assets === 'dry';
     run({ action: 'assets', only: sel, dryRun: dry },
       dry ? null : `上传 ${sel.length} 张图片到 Steamworks 后台？\n\n${sel.map((r) => '· ' + r).join('\n')}\n\n会替换后台同位置、同语言的图片（截图会新增一张）。保存为草稿，不在后台点发布就不会上线。`);
+  } else if (d.delimg) {
+    e.preventDefault();
+    const c = (() => { const [id, l] = d.delimg.split('|'); return a.images.slots.find((s) => s.id === id)?.cells[l]; })();
+    run({ action: 'delete-images', only: [d.delimg] },
+      `从 Steamworks 后台删除“${d.dellabel}”这张图？
+
+${c?.local ? `本地文件 ${c.local.rel} 不会删除，它会变回“待上传”；不想再传就把本地文件也删掉。
+` : ''}删除保存为草稿，不在后台点发布就不会影响商店。`);
   } else if (d.edit) { editing = d.edit; render(); $('#ed')?.focus(); }
   else if (d.cancel !== undefined) { editing = null; render(); }
   else if (d.save) {
@@ -741,6 +765,16 @@ document.addEventListener('click', async (e) => {
     if (confirm(`删除 App“${x.name || x.key}”？只是不再同步，本地文件不会删。点“保存”后生效。`)) { draft.apps.splice(Number(d.delapp), 1); render(); }
   } else if (d.saverules !== undefined) {
     try { await api('/api/rules', { project, text: $('#rules').value }); rules.text = $('#rules').value; rules.exists = true; $('#rules-msg').textContent = '✓ 已保存 ' + new Date().toLocaleTimeString(); } catch (err) { alert(err.message); }
+  } else if (d.copyprompt !== undefined) {
+    try {
+      // 先保存编辑框里没保存的修改，复制出去的内容和文件保持一致
+      if ($('#rules') && $('#rules').value !== rules.text) { await api('/api/rules', { project, text: $('#rules').value }); rules.text = $('#rules').value; rules.exists = true; }
+      const { text } = await api('/api/rules/prompt?project=' + encodeURIComponent(project));
+      $('#prompt-msg').textContent = (await copyText(text)) ? '✓ 已复制，去游戏项目的 AI 对话里粘贴发送' : '复制失败，请手动复制下面的规则';
+    } catch (err) { alert(err.message); }
+  } else if (d.upgraderules !== undefined) {
+    if (!confirm('用最新的规则替换通用部分？“本项目的风格”一节会保留。')) return;
+    try { await api('/api/rules/upgrade', { project }); rules = null; render(); } catch (err) { alert(err.message); }
   }
 });
 

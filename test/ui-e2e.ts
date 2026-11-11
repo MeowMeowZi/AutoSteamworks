@@ -81,6 +81,7 @@ try {
   r = await rawPost('/api/projects/init', { project: c2, name: '第二个游戏', appid: 2000, languages: ['english', 'japanese'] });
   assert.equal(r.status, 200);
   assert.ok(existsSync(join(g2, 'STEAM_RULES.md')));
+  assert.match(readFileSync(join(g2, 'CLAUDE.md'), 'utf8'), /STEAM_RULES\.md/, '初始化时让 Claude Code 知道规则文件');
   assert.match(readFileSync(join(g2, '.gitignore'), 'utf8'), /^Library\/\n# AutoSteamworks.*\n\.autosw\/\n$/);
   st = await stateOf(c2);
   assert.equal(st.current.configured, true);
@@ -109,6 +110,25 @@ try {
   assert.equal(rules.exists, true);
   assert.equal((await rawPost('/api/rules', { project: c2, text: rules.text + '\n- 术语：邪神 = Evil God\n' })).status, 200);
   assert.match(readFileSync(join(g2, 'STEAM_RULES.md'), 'utf8'), /邪神 = Evil God/);
+  assert.equal((await get('/api/rules?project=' + encodeURIComponent(c2))).outdated, false, '只改了风格一节不算旧版');
+
+  // 复制给 AI：项目现状 + 完整规则
+  const prompt = (await get('/api/rules/prompt?project=' + encodeURIComponent(c2))).text as string;
+  assert.match(prompt, /appid 2000/);
+  assert.match(prompt, /还没从后台拉取/);
+  assert.match(prompt, /-c ".*steam\.config\.yaml" check/);
+  assert.match(prompt, /邪神 = Evil God/, '带上规则全文');
+
+  // 旧版规则：通用部分被换成新模板，风格一节保留
+  writeFileSync(join(g2, 'STEAM_RULES.md'), '# 旧规则\n\n旧的通用内容\n\n## 本项目的风格（用户自己填写）\n\n- 语气：轻松\n');
+  assert.equal((await get('/api/rules?project=' + encodeURIComponent(c2))).outdated, true);
+  assert.equal((await rawPost('/api/rules/upgrade', { project: c2 })).status, 200);
+  const upgraded = readFileSync(join(g2, 'STEAM_RULES.md'), 'utf8');
+  assert.doesNotMatch(upgraded, /旧的通用内容/);
+  assert.match(upgraded, /## 工作流程/);
+  assert.match(upgraded, /- 语气：轻松\n$/);
+  assert.equal((await get('/api/rules?project=' + encodeURIComponent(c2))).outdated, false);
+  assert.equal(readFileSync(join(g2, 'CLAUDE.md'), 'utf8').match(/STEAM_RULES\.md/g)!.length, 1, '指引不重复添加');
 
   assert.equal((await rawPost('/api/projects/remove', { project: c2 })).status, 200);
   assert.ok(existsSync(c2), '移除项目不删文件');
@@ -216,6 +236,17 @@ try {
   assert.equal(cell(a, 'header', 'english').status, 'pending');
   const lr = (await stateOf()).lastResult;
   assert.ok(lr.ok && lr.lines.some((l: string) => l.startsWith('后台位置：商店页管理 → 图像资产 → 商店资产 → 小宣传图 → english')), '结果框写明后台位置');
+
+  // 从后台删除图片：后台没有了，本地那张变回待上传
+  await runJob({ action: 'delete-images', only: ['small_capsule|english'] });
+  assert.deepEqual(srv.deletes.filter((k) => k.includes('[image][')), ['app[assets][small_capsule][image][english]']);
+  a = await game();
+  assert.equal(cell(a, 'small_capsule', 'english').remoteUrl, undefined, '删除后自动读取后台状态');
+  assert.equal(cell(a, 'small_capsule', 'english').status, 'pending');
+  const dr = (await stateOf()).lastResult;
+  assert.ok(dr.ok && dr.action === 'delete-images', JSON.stringify(dr));
+  assert.ok(dr.lines.some((l: string) => /^✓ 已删除 小宣传图（英语）（已核对）/.test(l)), JSON.stringify(dr.lines));
+  assert.ok(dr.lines.some((l: string) => l.startsWith('本地文件 store/english/small.png 没有删除')), '结果框提醒本地文件还在');
 
   // 字段显示成后台上的名字
   assert.equal(field(a, 'english', 'short_description').info.label, '简短描述');

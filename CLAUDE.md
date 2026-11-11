@@ -13,9 +13,11 @@ Steamworks **没有**修改商店页面的官方 API，所以一切都靠操作�
 | `login`：弹出 Edge 手动登录，自动检测 `steamLoginSecure` Cookie | ✅ 真实后台验证 |
 | `pull` / `status` / `diff` / `push`：商店文本 | ✅ 真实后台验证（602 个字段，写入 schinese 简短描述并核对） |
 | `assets`：宣传图、库资源、截图 | ✅ 真实后台验证（上传了 schinese 形象图片，并从后台数据核对） |
+| `delete-image` + 网页上“从后台删除”：删除宣传图 / 库资源 / 页面背景 | ⚠ 模拟后台测试通过；真实后台只跑过演练（找到了 schinese 形象图片的删除链接），还没真正删过。截图删除没做 |
 | `ui`：本地后台网页（查看、编辑、规则检查、勾选上传）+ `check`（离线规则检查） | ✅ 模拟后台测试通过；在真实项目上打开过页面（只读），还没在网页上真实上传过 |
 | 打包：`npm i -g github:MeowMeowZi/AutoSteamworks` 后在任何目录用 `autosw` | ✅ 用 npm pack + 全局安装到临时目录（omit=dev）验证过 init / help / ui |
 | 启动项 + 网页里管理一切：`install.ps1` 一键安装并创建快捷方式；网页上添加项目、初始化、设置、AI 规则、登录、退出 | ✅ 模拟后台测试 + 沙盒里用 Edge 点过完整流程；快捷方式在临时目录验证过；install.ps1 只做了语法检查，还没在干净的机器上跑过 |
+| AI 规则：`templates/STEAM_RULES.md` 是给游戏项目里的 AI 用的完整手册（工作流程、配置说明、字段对照、Steam 规则）；网页“AI 规则”页的“复制给 AI”会生成“项目现状 + 规则全文”；规则文件是旧版时可以一键升级（保留“本项目的风格”一节）；初始化时在游戏项目的 CLAUDE.md（以及已有的 AGENTS.md）里加上指向规则文件的说明 | ✅ 模拟测试通过；还没在真实游戏项目里让 AI 照着跑过 |
 | `build`：生成 VDF + 调用 steamcmd | ⚠ 已实现但从未真实运行；配置里 `steamcmd.user` 还是占位值，`builds/windows` 目录也不存在 |
 | `push --publish`：发布 | ⏳ 未做，发布页面还没探查过 |
 | 成就 | ⏳ 未做（后台地址 `https://partner.steamgames.com/apps/achievements/5596340`） |
@@ -42,6 +44,7 @@ Steamworks **没有**修改商店页面的官方 API，所以一切都靠操作�
   - 用页面自带的 `g_ImageTypes` 和 `IsImageTypeValid` 按尺寸判断类型。
   - 请求 key = 类型路径 [+ `|<lang>`]；截图的 key 是 `screenshot|assets|screenshots|0|english[]`，另外带 `params[<文件名>][all_ages]`，文件名里插入 `.AA1`。
   - POST 到 `save/<itemid>?activetab=tab_graphicalassets&json=1`。成功时返回 `{"redirect":"...SuccessMsg[0]=Changes+saved..."}`，失败时 redirect 地址里带 `ErrorMsg`。
+- **删除图片**（2026-11-11 探查，scripts/probe-delete*.ts）：每张已上传的图旁有“删除”链接，onclick 是 `SubmitQuickMessageUpdate({"app[assets][header_image][image][schinese]":"", ...image2x..., ...image2x_raw...})`，它把字段加进 `#quick_message_update` 表单（sessionid、save_redirect=edit）再加 activetab，普通表单 POST 到 `save/<itemid>`。我们从页面上读这个链接的参数，不自己拼字段名。截图的删除是另一套：`DeleteScreenshot` → `quickupdateajax/<itemid>`，参数 `app[assets][screenshots][<序号>] = ''`，还没做。
 - **会话**：页面有长连接，`networkidle` 永远等不到。统一用 `src/browser.ts` 里的 `settle()`：等 load，再最多等 5 秒网络空闲。
 - **图片槽位**（2026-11-11 读 g_ImageTypes 和 IsImageTypeValid）：一般要求尺寸完全一致；库徽标宽或高一致即可；截图只要求不小于 1920x1080。没有类型开启 supports2x。商店的 4 张宣传图是必填（后台标 *），后台顶部“商店资产 0/4 已添加”只按英文版计数。
 - **后台显示已上传图片的方式**：后台把文件改名为 `header_schinese.jpg` 之类，列表里只有“简体中文 920 x 430 新”这样一行，点语言名才显示图片。图片 CDN 是 `https://shared.cdn.queniuqe.com/store_item_assets/steam/apps/<appid>/<hash>/<文件名>`（从页面链接里读到）。用户曾因此以为上传失败，网页上要写清楚后台位置。
@@ -73,7 +76,7 @@ src/slots.ts               后台图片槽位表（照抄 g_ImageTypes）和按�
 src/fieldInfo.ts           字段名 → 后台页签 / 分组 / 中文名
 src/partner/meta.ts        后台状态快照（serialized_app_data.assets、CDN 前缀、复选框文字），pull/diff/push/assets 时保存到 .autosw/remote/
 src/local/imageSize.ts     离线读 PNG/JPEG/GIF/WebP 尺寸
-templates/STEAM_RULES.md   `init` 复制到游戏项目里，给 AI 看的规则
+templates/STEAM_RULES.md   `init` 复制到游戏项目里，给 AI 看的规则。“## 本项目的风格”这个标题是升级时的分界线，不要改名
 src/sync.ts                三方对比（本地 / 线上 / 快照）：local / remote / conflict / gone
 src/build/steampipe.ts     生成 VDF + 调用 steamcmd
 test/mock-partner.ts       模拟后台，按真实页面结构还原
@@ -81,7 +84,7 @@ test/e2e.ts                商店文本端到端测试
 test/assets-e2e.ts         图片端到端测试
 test/ui-e2e.ts             网页接口端到端测试（在进程内启动 startUi）
 test/png.ts                测试用的 PNG 生成
-scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-assets、probe-assets2、probe-uploaded）
+scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-assets、probe-assets2、probe-uploaded、probe-delete、probe-delete2）
 ```
 
 状态文件都在 `.autosw/`（已加进 gitignore）：
@@ -108,7 +111,7 @@ scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-
 ## 常用命令
 
 ```powershell
-npm run autosw -- login | pull | status | check | diff | push [-n] [-f] | assets [-n] [-f] | ui | inspect game | build game [-n]
+npm run autosw -- login | pull | status | check | diff | push [-n] [-f] | assets [-n] [-f] | delete-image game "header|schinese" [-n] | ui | inspect game | build game [-n]
 npm run typecheck
 npm test
 ```
