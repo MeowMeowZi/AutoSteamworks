@@ -1,17 +1,15 @@
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { createTwoFilesPatch } from 'diff';
 import type { Page } from 'playwright-core';
 import { loadConfig, selectApps, type AppConfig, type Config } from './config.js';
 import { openBrowser, isLoginPage, hasLoginCookie, sleep, PARTNER_HOME } from './browser.js';
-import type { FieldValue } from './partner/form.js';
-import { fetchRemote, loadStorePage, pushStore, storeEditUrl } from './partner/store.js';
-import { hasLocal, readLocal, readSnapshot, splitLocalized, writeLocal, writeSnapshot } from './local/storeFiles.js';
-import { localEdits, threeWay, type Change } from './sync.js';
+import { loadStorePage, storeEditUrl } from './partner/store.js';
+import { hasLocal, readLocal, readSnapshot, splitLocalized } from './local/storeFiles.js';
+import { localEdits } from './sync.js';
+import { lint } from './lint.js';
 import { runBuild } from './build/steampipe.js';
-import { openAssetsPage, uploadAssets } from './partner/assets.js';
-import { assetStates, readManifest, scanAssets, writeManifest } from './local/assetFiles.js';
+import { assetsApp, diffApp, pullApp, display, DRAFT_NOTE, preview, printChange, pushApp } from './ops.js';
 
 const program = new Command('autosw')
   .description('把本地文件同步到 Steamworks 后台')
@@ -19,29 +17,7 @@ const program = new Command('autosw')
 
 const cfg = (): Config => loadConfig(program.opts().config);
 
-const preview = (v: FieldValue | undefined) => {
-  if (v === undefined) return '∅';
-  const s = JSON.stringify(v);
-  return s.length > 60 ? s.slice(0, 60) + '…' : s;
-};
-
-/** 把字段 name 显示成本地文件里的写法，方便对照 */
-const display = (key: string) => {
-  const loc = splitLocalized(key);
-  return loc ? `${loc.lang}/${loc.path}` : key;
-};
-
-function printChange(c: Change, verbose: boolean) {
-  const tag = { local: '↑ 本地改动', remote: '↓ 线上改动', conflict: '⚠ 冲突', gone: '✗ 线上无此字段' }[c.kind];
-  console.log(`  ${tag}  ${display(c.key)}`);
-  if (!verbose) return;
-  if (typeof c.local === 'string' && typeof c.remote === 'string') {
-    const patch = createTwoFilesPatch('remote', 'local', c.remote.replace(/\r\n/g, '\n') + '\n', c.local + '\n', '', '', { context: 2 });
-    console.log(patch.split('\n').slice(3).map((l) => '      ' + l).join('\n'));
-  } else {
-    console.log(`      线上: ${preview(c.remote)}\n      本地: ${preview(c.local)}`);
-  }
-}
+const log = (line: string) => console.log(line);
 
 /** 打开浏览器，依次处理每个 App */
 async function eachApp(keys: string[], headed: boolean, fn: (page: Page, app: AppConfig, c: Config) => Promise<void>) {
@@ -58,10 +34,17 @@ async function eachApp(keys: string[], headed: boolean, fn: (page: Page, app: Ap
   }
 }
 
-program.command('init').description('在当前目录生成示例配置 steam.config.yaml').action(() => {
-  if (existsSync('steam.config.yaml')) return console.log('steam.config.yaml 已存在，未覆盖');
-  copyFileSync(join(import.meta.dirname, '..', 'steam.config.example.yaml'), 'steam.config.yaml');
-  console.log('已生成 steam.config.yaml，请填入你的 appid');
+program.command('init').description('在当前目录生成示例配置 steam.config.yaml 和给 AI 看的规则 STEAM_RULES.md').action(() => {
+  const tpl: [string, string][] = [
+    ['steam.config.yaml', join(import.meta.dirname, '..', 'steam.config.example.yaml')],
+    ['STEAM_RULES.md', join(import.meta.dirname, '..', 'templates', 'STEAM_RULES.md')],
+  ];
+  for (const [dst, src] of tpl) {
+    if (existsSync(dst)) { console.log(`${dst} 已存在，未覆盖`); continue; }
+    copyFileSync(src, dst);
+    console.log(`已生成 ${dst}`);
+  }
+  console.log('请在 steam.config.yaml 里填入 appid，在 STEAM_RULES.md 末尾填写本项目的风格和术语表');
 });
 
 program.command('apps').description('列出配置中的 App').action(() => {
@@ -112,18 +95,7 @@ program.command('pull [apps...]').description('把后台的商店内容拉到本
   .option('--headed', '显示浏览器窗口')
   .action(async (keys: string[], o) => {
     await eachApp(keys, !!o.headed, async (page, app, c) => {
-      const base = readSnapshot(c, app);
-      if (hasLocal(app) && base && !o.force) {
-        const edits = localEdits(readLocal(app), base);
-        if (edits.length) {
-          console.log(`  跳过：本地有 ${edits.length} 个未推送的改动（${edits.slice(0, 3).map(display).join(', ')}…），先 push 或加 --force`);
-          return;
-        }
-      }
-      const fields = await fetchRemote(page, c, app);
-      writeLocal(app, fields);
-      writeSnapshot(c, app, fields);
-      console.log(`  ✓ ${Object.keys(fields).length} 个字段 → ${app.storeDir}`);
+      await pullApp(page, c, app, { force: !!o.force }, log);
     });
   });
 
@@ -139,15 +111,32 @@ program.command('status [apps...]').description('（离线）列出本地相对�
     }
   });
 
+program.command('check [apps...]').description('（离线）按规则检查本地商店文本，并列出未上传的改动；有错误时退出码为 1')
+  .action((keys: string[]) => {
+    const c = cfg();
+    let errors = 0;
+    for (const app of selectApps(c, keys)) {
+      if (!hasLocal(app)) { console.log(`${app.key}: 尚未 pull`); continue; }
+      const local = readLocal(app);
+      const issues = lint(app, local);
+      const base = readSnapshot(c, app);
+      const edits = base ? localEdits(local, base) : [];
+      console.log(`${app.key}: ${issues.length ? issues.length + ' 个问题' : '规则检查通过'}，${edits.length} 处未上传的改动`);
+      for (const i of issues) console.log(`  ${i.level === 'error' ? '✗' : '⚠'} ${display(i.key)}  ${i.msg}`);
+      edits.forEach((k) => console.log('  ↑ ' + display(k)));
+      errors += issues.filter((i) => i.level === 'error').length;
+    }
+    process.exitCode = errors ? 1 : 0;
+  });
+
 program.command('diff [apps...]').description('对比 本地 / 线上 / 上次同步 三方')
   .option('--headed', '显示浏览器窗口')
   .action(async (keys: string[], o) => {
     await eachApp(keys, !!o.headed, async (page, app, c) => {
-      const base = readSnapshot(c, app);
-      if (!hasLocal(app) || !base) return console.log('  尚未 pull');
-      const changes = threeWay(readLocal(app), await fetchRemote(page, c, app), base);
+      const changes = await diffApp(page, c, app);
+      if (!changes) return console.log('  尚未 pull');
       if (!changes.length) console.log('  ✓ 已同步');
-      changes.forEach((ch) => printChange(ch, true));
+      changes.forEach((ch) => printChange(log, ch, true));
     });
   });
 
@@ -158,27 +147,11 @@ program.command('push [apps...]').description('把本地改动保存到后台（
   .action(async (keys: string[], o) => {
     let failed = false, pushed = false;
     await eachApp(keys, !!o.headed, async (page, app, c) => {
-      const base = readSnapshot(c, app);
-      if (!hasLocal(app) || !base) return console.log('  尚未 pull，跳过（必须先 pull 才能安全地推送）');
-      const changes = threeWay(readLocal(app), await fetchRemote(page, c, app), base);
-      changes.filter((ch) => ch.kind !== 'local').forEach((ch) => printChange(ch, false));
-      const toPush = changes.filter((ch) => ch.kind === 'local' || (o.force && ch.kind === 'conflict'));
-      if (!toPush.length) return console.log('  没有需要推送的改动');
-      toPush.forEach((ch) => printChange(ch, !!o.dryRun));
-      if (o.dryRun) return;
-
-      const r = await pushStore(page, c, app, toPush.map((ch) => [ch.key, ch.local!]));
-      // 只把成功保存的字段写进快照；其他字段保持原来的基准，否则会误把线上改动当成本地改动
-      const snap = { ...base };
-      for (const k of r.saved) snap[k] = r.after[k];
-      writeSnapshot(c, app, snap);
-      pushed ||= r.saved.length > 0;
-      console.log(`  ✓ 已保存 ${r.saved.length} 个字段（HTTP ${r.status}）`);
-      if (r.missing.length) console.log(`  ✗ 页面上找不到: ${r.missing.map(display).join(', ')}`);
-      if (r.notPersisted.length) console.log(`  ✗ 提交了但重新加载后值不对: ${r.notPersisted.map(display).join(', ')}`);
-      if (r.missing.length || r.notPersisted.length) failed = true;
+      const r = await pushApp(page, c, app, { dryRun: !!o.dryRun, force: !!o.force }, log);
+      failed ||= r.failed;
+      pushed ||= r.pushed;
     });
-    if (pushed) console.log('\n提醒：改动已保存为草稿，要在 Steamworks 的“发布”页面发布后才会在商店生效。');
+    if (pushed) console.log('\n' + DRAFT_NOTE);
     process.exitCode = failed ? 1 : 0;
   });
 
@@ -189,48 +162,11 @@ program.command('assets [apps...]').description('上传新增或改过的图片�
   .action(async (keys: string[], o) => {
     let failed = false, uploaded = false;
     await eachApp(keys, !!o.headed, async (page, app, c) => {
-      const { assets, warnings } = scanAssets(app);
-      warnings.forEach((w) => console.log(`  ⚠ ${w}`));
-      if (!assets.length) return console.log(`  ${app.assets.dir} 下没有图片`);
-      const manifest = readManifest(c, app);
-      const states = assetStates(assets, manifest);
-      const todo = states.filter((s) => o.force || s.state !== 'same');
-      console.log(`  共 ${assets.length} 张，需要上传 ${todo.length} 张`);
-      if (!todo.length) return;
-
-      const hasShots = todo.some((s) => s.asset.tab === 'screenshot');
-      if (hasShots && app.assets.screenshotsAllAges === undefined) {
-        failed = true;
-        return console.log('  ✗ 有截图要上传，但配置里没设置 assets.screenshotsAllAges（Steam 要求声明截图是否适合所有年龄）');
-      }
-      if (!o.dryRun && todo.some((s) => s.asset.tab !== 'screenshot')) {
-        console.log('  ℹ Steam 规定：基础宣传图只能包含游戏美术、游戏名称和官方副标题；宣传更新/活动的文字要作为替代艺术作品上传。');
-      }
-
-      await openAssetsPage(page, c, app);
-      const results = await uploadAssets(page, c, todo.map((s) => ({ ...s.asset, expectChange: s.state !== 'same' })), { allAges: app.assets.screenshotsAllAges, dryRun: !!o.dryRun });
-      for (const [i, r] of results.entries()) {
-        const s = todo[i];
-        const note = s.state === 'changed' ? '（已修改）' : '';
-        if (!r.ok) {
-          failed = true;
-          console.log(`  ✗ ${r.rel}${note}  ${r.error}${r.status ? ` (HTTP ${r.status})` : ''}`);
-          if (r.body) console.log(`      ${r.body.slice(0, 300).replace(/\s+/g, ' ')}`);
-          continue;
-        }
-        const where = s.asset.lang && r.key?.endsWith('|' + s.asset.lang) ? ` [${s.asset.lang}]` : '';
-        console.log(`  ${o.dryRun ? '→' : '✓'} ${r.rel}${note}  ${r.type} ${r.size}${where}${r.verified ? '（已核对）' : ''}`);
-        if (r.warning) console.log(`      ⚠ ${r.warning}`);
-        if (o.dryRun) continue;
-        uploaded = true;
-        manifest[r.rel] = { hash: s.asset.hash, type: r.type, uploadedAt: new Date().toISOString() };
-        if (s.state === 'changed' && s.asset.tab === 'screenshot') {
-          console.log('      ⚠ 截图改动会作为一张新截图上传，旧的那张需要在后台手动删除');
-        }
-      }
-      if (!o.dryRun) writeManifest(c, app, manifest);
+      const r = await assetsApp(page, c, app, { dryRun: !!o.dryRun, force: !!o.force }, log);
+      failed ||= r.failed;
+      uploaded ||= r.pushed;
     });
-    if (uploaded) console.log('\n提醒：图片已保存为草稿，要在 Steamworks 的“发布”页面发布后才会在商店生效。');
+    if (uploaded) console.log('\n' + DRAFT_NOTE);
     process.exitCode = failed ? 1 : 0;
   });
 
@@ -242,6 +178,21 @@ program.command('build <app>').description('通过 steamcmd / SteamPipe 上传�
     const c = cfg();
     const [app] = selectApps(c, [key]);
     await runBuild(c, app, { desc: o.desc, preview: !!o.preview, dryRun: !!o.dryRun });
+  });
+
+program.command('ui').description('打开本地后台网页：查看本地内容和改动，勾选后一键上传')
+  .option('-p, --port <port>', '端口', '5180')
+  .option('--no-open', '不自动打开浏览器')
+  .action(async (o) => {
+    cfg(); // 先校验配置
+    const { startUi } = await import('./ui/server.js');
+    const { url } = await startUi(program.opts().config, Number(o.port));
+    console.log(`后台网页已启动：${url}\n本地文件改动（编辑器或 AI 修改）会自动刷新到网页上。按 Ctrl+C 退出。`);
+    if (o.open) {
+      const { spawn } = await import('node:child_process');
+      const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : [process.platform === 'darwin' ? 'open' : 'xdg-open', [url]];
+      spawn(cmd, args as string[], { stdio: 'ignore', detached: true }).unref();
+    }
   });
 
 program.parseAsync().catch((e) => {

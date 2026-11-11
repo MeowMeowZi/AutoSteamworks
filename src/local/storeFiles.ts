@@ -120,3 +120,22 @@ export function writeSnapshot(cfg: Config, app: AppConfig, fields: Fields) {
   mkdirSync(join(p, '..'), { recursive: true });
   writeFileSync(p, JSON.stringify(fields, null, 2));
 }
+
+/**
+ * 只改本地的一个字段（网页上手动编辑、还原时用）。
+ * 字段必须已经在本地文件里；yaml 用 Document 修改，保留注释和顺序。
+ */
+export function writeLocalField(app: AppConfig, key: string, value: FieldValue) {
+  if (!(key in readLocal(app))) throw new Error(`本地没有字段 ${key}`);
+  const loc = splitLocalized(key);
+  const file = loc ? join(app.storeDir, loc.lang, loc.path + EXT) : undefined;
+  if (file && existsSync(file)) {
+    if (typeof value !== 'string') throw new Error(`${key} 是文本字段`);
+    writeFileSync(file, value);
+    return;
+  }
+  const yamlPath = loc ? join(app.storeDir, loc.lang, FIELDS) : join(app.storeDir, COMMON);
+  const doc = YAML.parseDocument(readFileSync(yamlPath, 'utf8'));
+  doc.set(loc ? loc.path : key, value);
+  writeFileSync(yamlPath, doc.toString({ lineWidth: 0 }));
+}

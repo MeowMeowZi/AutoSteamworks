@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AutoSteamworks</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --line:#e3e6ea; --muted:#6b7280; --accent:#1a73e8; --add:#d9f7d9; --del:#fde2e2; --warn:#b45309; --err:#c62828; --ok:#2e7d32; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 "Microsoft YaHei", system-ui, sans-serif; background:var(--bg); color:#1f2328; }
+  header { display:flex; align-items:center; gap:16px; padding:10px 20px; background:#1b2838; color:#fff; position:sticky; top:0; z-index:5; }
+  header h1 { font-size:16px; margin:0; }
+  header .cfg { color:#9fb3c8; font-size:12px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  header .job { font-size:13px; color:#ffd666; }
+  .layout { display:flex; min-height:calc(100vh - 48px); }
+  nav { width:220px; flex:none; border-right:1px solid var(--line); background:var(--card); padding:12px 0; }
+  nav a { display:block; padding:8px 16px; color:inherit; text-decoration:none; cursor:pointer; }
+  nav a.on { background:#e8f0fe; color:var(--accent); font-weight:600; }
+  nav a small { color:var(--muted); display:block; font-size:12px; }
+  .badge { display:inline-block; min-width:18px; padding:0 6px; border-radius:9px; background:var(--accent); color:#fff; font-size:12px; text-align:center; margin-left:4px; }
+  .badge.gray { background:#9aa4b2; }
+  main { flex:1; padding:16px 24px 170px; min-width:0; }
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:12px; }
+  .tabs button { border:0; background:none; padding:8px 14px; cursor:pointer; font-size:14px; border-bottom:2px solid transparent; }
+  .tabs button.on { border-color:var(--accent); color:var(--accent); font-weight:600; }
+  .bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:12px; }
+  .bar .sp { flex:1; }
+  button.b { border:1px solid var(--line); background:var(--card); padding:5px 12px; border-radius:6px; cursor:pointer; font-size:13px; }
+  button.b:hover { border-color:var(--accent); }
+  button.b.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.b:disabled { opacity:.5; cursor:not-allowed; }
+  select { padding:4px 8px; border:1px solid var(--line); border-radius:6px; }
+  input[type=search] { padding:5px 10px; border:1px solid var(--line); border-radius:6px; width:220px; }
+  .note { color:var(--muted); font-size:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; margin-bottom:12px; }
+  .card > h3 { margin:0; padding:8px 12px; font-size:13px; font-family:Consolas, monospace; border-bottom:1px solid var(--line); background:#fafbfc; border-radius:8px 8px 0 0; }
+  .cols { display:grid; grid-template-columns:repeat(var(--n), minmax(0, 1fr)); }
+  .cell { padding:8px 12px; border-left:1px solid var(--line); min-width:0; }
+  .cell:first-child { border-left:0; }
+  .cell.edited { background:#f6fbff; }
+  .cell .head { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  .cell .head .sp { flex:1; }
+  .cell .head a { cursor:pointer; color:var(--accent); }
+  .val { white-space:pre-wrap; word-break:break-word; font-size:13px; max-height:360px; overflow:auto; }
+  .val.empty { color:#b0b7c3; font-style:italic; }
+  .val ins { background:var(--add); text-decoration:none; }
+  .val del { background:var(--del); }
+  .preview { font-size:13px; max-height:360px; overflow:auto; border:1px dashed var(--line); padding:6px 10px; }
+  .preview h1 { font-size:18px; } .preview h2 { font-size:16px; } .preview h3 { font-size:14px; }
+  .preview .img { display:inline-block; padding:2px 6px; background:#eef; color:#557; font-size:12px; }
+  textarea { width:100%; min-height:140px; font:13px/1.5 Consolas, "Microsoft YaHei", monospace; }
+  .tag { font-size:11px; padding:0 6px; border-radius:4px; background:#eef2f7; color:#4b5563; }
+  .tag.local { background:#e3f2fd; color:#1565c0; } .tag.remote { background:#fff3e0; color:#e65100; }
+  .tag.conflict { background:#fde2e2; color:var(--err); } .tag.gone { background:#eee; color:#555; }
+  .tag.new { background:#e3f2fd; color:#1565c0; } .tag.changed { background:#fff3e0; color:#e65100; } .tag.same { background:#e8f5e9; color:var(--ok); }
+  .lint { padding:8px 12px; }
+  .lint div { font-size:13px; }
+  .lint .error { color:var(--err); } .lint .warn { color:var(--warn); }
+  table.common { width:100%; border-collapse:collapse; font-size:13px; }
+  table.common td { border-top:1px solid var(--line); padding:6px 10px; vertical-align:top; }
+  table.common td.k { font-family:Consolas, monospace; width:40%; word-break:break-all; }
+  table.common tr.edited { background:#f6fbff; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:12px; }
+  .asset { background:var(--card); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .asset img { width:100%; height:150px; object-fit:contain; background:#222; display:block; }
+  .asset .meta { padding:8px 10px; font-size:12px; }
+  .asset .meta b { font-family:Consolas, monospace; font-weight:normal; word-break:break-all; }
+  #log { position:fixed; left:220px; right:0; bottom:0; height:150px; background:#0d1117; color:#c9d1d9; font:12px/1.5 Consolas, monospace; padding:8px 16px; overflow:auto; white-space:pre-wrap; border-top:3px solid #1b2838; }
+  #log .t { color:#8b949e; }
+  .empty-state { padding:40px; text-align:center; color:var(--muted); }
+</style>
+</head>
+<body>
+<header><h1>AutoSteamworks</h1><span class="cfg" id="cfg"></span><span class="job" id="job"></span></header>
+<div class="layout">
+  <nav id="nav"></nav>
+  <main id="main"><div class="empty-state">加载中…</div></main>
+</div>
+<div id="log"><span class="t">日志：在这里显示拉取、对比、上传的过程。本地文件改动会自动刷新页面。</span>
+</div>
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const KIND = { local: '本地改动', remote: '线上改动', conflict: '冲突', gone: '线上已删除' };
+const ASSET_STATE = { new: '新增', changed: '已修改', same: '已上传' };
+
+let S = null;               // 服务器返回的状态
+let cur = localStorage.appKey || null;
+let tab = localStorage.tab || 'text';
+let view = localStorage.view || 'filled'; // edited | filled | all
+let showPreview = false;
+let filter = '';
+let editing = null;         // 正在编辑的字段 key
+const picked = new Set();   // 勾选要上传的字段 key / 图片 rel
+const unpicked = new Set(); // 用户手动取消勾选的（默认全选改动）
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+async function load() {
+  S = await api('/api/state');
+  if (!S.apps.find((a) => a.key === cur)) cur = S.apps[0]?.key;
+  render();
+}
+
+function app() { return S.apps.find((a) => a.key === cur); }
+
+/** 所有本地字段（扁平） */
+function allFields(a) {
+  const out = [...a.common];
+  for (const row of a.localized) for (const f of Object.values(row.langs)) out.push(f);
+  return out;
+}
+function editedFields(a) { return allFields(a).filter((f) => f.edited); }
+function pendingAssets(a) { return a.assets.filter((x) => x.state !== 'same'); }
+function isPicked(id, def) { return picked.has(id) || (def && !unpicked.has(id)); }
+function setPick(id, on, def) {
+  if (on) { picked.add(id); unpicked.delete(id); } else { picked.delete(id); if (def) unpicked.add(id); }
+  render();
+}
+
+// ---- BBCode 预览（只做常用标签，够看排版就行） ----
+function bbcode(src) {
+  let h = esc(src);
+  const rep = [
+    [/\[h([123])\]([\s\S]*?)\[\/h\1\]/gi, '<h$1>$2</h$1>'],
+    [/\[b\]([\s\S]*?)\[\/b\]/gi, '<b>$1</b>'], [/\[i\]([\s\S]*?)\[\/i\]/gi, '<i>$1</i>'],
+    [/\[u\]([\s\S]*?)\[\/u\]/gi, '<u>$1</u>'], [/\[strike\]([\s\S]*?)\[\/strike\]/gi, '<s>$1</s>'],
+    [/\[url=([^\]]+)\]([\s\S]*?)\[\/url\]/gi, '<a href="$1" target="_blank" rel="noreferrer">$2</a>'],
+    [/\[img[^\]]*\]([\s\S]*?)\[\/img\]/gi, '<span class="img">图片 $1</span>'],
+    [/\[hr\]\s*(\[\/hr\])?/gi, '<hr>'],
+    [/\[list\]/gi, '<ul>'], [/\[\/list\]/gi, '</ul>'], [/\[olist\]/gi, '<ol>'], [/\[\/olist\]/gi, '</ol>'],
+    [/\[\*\]/g, '<li>'],
+  ];
+  for (const [re, to] of rep) h = h.replace(re, to);
+  return h.replace(/\n/g, '<br>');
+}
+
+function valueHtml(f) {
+  if (f.parts) return f.parts.map((p) => p.t > 0 ? `<ins>${esc(p.v)}</ins>` : p.t < 0 ? `<del>${esc(p.v)}</del>` : esc(p.v)).join('');
+  if (f.local === '' ) return '';
+  return esc(typeof f.local === 'boolean' ? (f.local ? '✔ 是' : '✘ 否') : f.local);
+}
+
+function fieldCell(a, f, label) {
+  if (!f) return `<div class="cell"><div class="head">${esc(label)}</div><div class="val empty">（本地没有这个字段）</div></div>`;
+  const kind = f.remote?.kind || (f.edited ? 'local' : null);
+  const def = f.edited && kind !== 'conflict';
+  const head = `<div class="head">
+      ${f.edited ? `<input type="checkbox" data-pick="${esc(f.key)}" data-def="${def ? 1 : 0}" ${isPicked(f.key, def) ? 'checked' : ''} title="勾选后上传">` : ''}
+      <b>${esc(label)}</b>${kind ? `<span class="tag ${kind}">${KIND[kind]}</span>` : ''}
+      ${typeof f.local === 'string' ? `<span>${[...f.local].length} 字</span>` : ''}
+      <span class="sp"></span>
+      ${typeof f.local === 'string' ? `<a data-edit="${esc(f.key)}">编辑</a>` : ''}
+      ${f.edited && f.base !== undefined ? `<a data-revert="${esc(f.key)}">还原</a>` : ''}
+    </div>`;
+  if (editing === f.key) {
+    return `<div class="cell edited">${head}<textarea id="ed">${esc(f.local)}</textarea>
+      <div class="bar"><button class="b primary" data-save="${esc(f.key)}">保存到本地</button><button class="b" data-cancel>取消</button></div></div>`;
+  }
+  let body = f.local === '' ? '<div class="val empty">（空）</div>' : `<div class="val">${valueHtml(f)}</div>`;
+  if (showPreview && typeof f.local === 'string' && f.local) body += `<div class="preview">${bbcode(f.local)}</div>`;
+  if (f.remote && f.remote.kind !== 'local') {
+    body += `<div class="note">线上现在的值：</div><div class="val">${f.remote.value === undefined ? '（无）' : esc(f.remote.value)}</div>`;
+  }
+  return `<div class="cell ${f.edited ? 'edited' : ''}">${head}${body}</div>`;
+}
+
+function matches(text) { return !filter || text.toLowerCase().includes(filter.toLowerCase()); }
+
+function renderText(a) {
+  if (!a.pulled) return `<div class="empty-state">还没有拉取过这个 App 的商店内容。<br><br><button class="b primary" data-run="pull">从后台拉取</button></div>`;
+  const edited = editedFields(a);
+  const sel = edited.filter((f) => isPicked(f.key, f.remote?.kind !== 'conflict'));
+  const conflicts = sel.filter((f) => f.remote?.kind === 'conflict').length;
+  let h = `<div class="bar">
+    <button class="b" data-run="pull" title="本地有未上传的改动时不会覆盖">拉取</button>
+    <button class="b" data-run="diff">和线上对比</button>
+    <span class="note">${a.remoteCheckedAt ? '上次对比：' + new Date(a.remoteCheckedAt).toLocaleString() : '还没和线上对比过（上传时会自动对比）'}</span>
+    <span class="sp"></span>
+    <select id="view">${[['edited', '只看改动'], ['filled', '有内容的字段'], ['all', '全部字段']].map(([v, t]) => `<option value="${v}" ${view === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+    <label><input type="checkbox" id="preview" ${showPreview ? 'checked' : ''}> BBCode 预览</label>
+    <input type="search" id="filter" placeholder="搜索字段或内容" value="${esc(filter)}">
+  </div>
+  <div class="bar">
+    <span>本地改动 <b>${edited.length}</b> 处，已选 <b>${sel.length}</b> 处</span>
+    <a class="note" style="cursor:pointer" data-pickall="1">全选</a><a class="note" style="cursor:pointer" data-pickall="0">全不选</a>
+    <span class="sp"></span>
+    <button class="b" data-push="dry" ${sel.length ? '' : 'disabled'}>演练</button>
+    <button class="b primary" data-push="real" ${sel.length ? '' : 'disabled'}>上传选中的 ${sel.length} 处${conflicts ? `（含 ${conflicts} 处冲突）` : ''}</button>
+  </div>`;
+
+  if (a.lint.length) {
+    h += `<div class="card"><h3>规则检查（${a.lint.length}）</h3><div class="lint">${a.lint.map((i) =>
+      `<div class="${i.level}">${i.level === 'error' ? '✗' : '⚠'} <code>${esc(display(i.key))}</code> ${esc(i.msg)}</div>`).join('')}</div></div>`;
+  }
+  if (a.remoteOnly.length) {
+    h += `<div class="card"><h3>线上有改动、本地没改（${a.remoteOnly.length}）</h3><div class="lint"><div class="warn">这些字段在后台被改过，先“拉取”再编辑，否则上传时会跳过。</div>${a.remoteOnly.map((k) => `<div><code>${esc(display(k))}</code></div>`).join('')}</div></div>`;
+  }
+
+  const langs = a.languages;
+  let rows = a.localized;
+  const shown = (f) => view === 'all' || f.edited || f.remote || (view === 'filled' && f.local !== '' && f.local !== false);
+  rows = rows.filter((r) => Object.values(r.langs).some(shown));
+  rows = rows.filter((r) => matches(r.path) || Object.values(r.langs).some((f) => typeof f.local === 'string' && matches(f.local)));
+  for (const r of rows) {
+    h += `<div class="card"><h3>${esc(r.path)}</h3><div class="cols" style="--n:${langs.length}">${langs.map((l) => fieldCell(a, r.langs[l], l)).join('')}</div></div>`;
+  }
+  let common = a.common;
+  common = common.filter(shown);
+  common = common.filter((f) => matches(f.key) || matches(String(f.local)));
+  if (common.length) {
+    h += `<div class="card"><h3>通用字段（_common.yaml）</h3><table class="common">${common.map((f) => `<tr class="${f.edited ? 'edited' : ''}">
+      <td class="k">${f.edited ? `<input type="checkbox" data-pick="${esc(f.key)}" data-def="${f.remote?.kind === 'conflict' ? 0 : 1}" ${isPicked(f.key, f.remote?.kind !== 'conflict') ? 'checked' : ''}> ` : ''}${esc(f.key)}
+        ${f.remote ? `<span class="tag ${f.remote.kind}">${KIND[f.remote.kind]}</span>` : f.edited ? '<span class="tag local">本地改动</span>' : ''}</td>
+      <td><div class="val">${f.edited ? `<del>${esc(f.base)}</del> → <ins>${esc(f.local)}</ins>` : esc(f.local)}</div></td></tr>`).join('')}</table></div>`;
+  }
+  if (!rows.length && !common.length) h += `<div class="empty-state">${view === 'edited' ? '本地没有改动。右上角切换成“有内容的字段”可以浏览内容。' : '没有匹配的字段'}</div>`;
+  return h;
+}
+
+function renderAssets(a) {
+  const pend = pendingAssets(a);
+  const sel = a.assets.filter((x) => isPicked('asset:' + x.rel, x.state !== 'same'));
+  let h = `<div class="bar"><span>图片目录：<code>${esc(a.assetsDir)}</code></span><span class="sp"></span>
+    <span>待上传 <b>${pend.length}</b>，已选 <b>${sel.length}</b></span>
+    <button class="b" data-assets="dry" ${sel.length ? '' : 'disabled'}>演练（识别类型）</button>
+    <button class="b primary" data-assets="real" ${sel.length ? '' : 'disabled'}>上传选中的 ${sel.length} 张</button></div>`;
+  if (a.assetWarnings.length) h += `<div class="card"><div class="lint">${a.assetWarnings.map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join('')}</div></div>`;
+  if (!a.assets.length) return h + `<div class="empty-state">没有图片。放到 <code>store/&lt;语言&gt;/</code>、<code>library/&lt;语言&gt;/</code>、<code>screenshots/</code> 下，按尺寸自动识别类型。</div>`;
+  const groups = [['store', '商店宣传图'], ['library', '库资源'], ['screenshot', '截图']];
+  for (const [t, title] of groups) {
+    const items = a.assets.filter((x) => x.tab === t);
+    if (!items.length) continue;
+    h += `<h3>${title}</h3><div class="grid">${items.map((x) => {
+      const id = 'asset:' + x.rel;
+      return `<div class="asset"><img loading="lazy" src="/api/asset?app=${encodeURIComponent(a.key)}&rel=${encodeURIComponent(x.rel)}&v=${x.bytes}">
+        <div class="meta"><label><input type="checkbox" data-pick="${esc(id)}" data-def="${x.state !== 'same' ? 1 : 0}" ${isPicked(id, x.state !== 'same') ? 'checked' : ''}>
+        <b>${esc(x.rel)}</b></label><br><span class="tag ${x.state}">${ASSET_STATE[x.state]}</span>
+        ${x.lang ? `<span class="tag">${esc(x.lang)}</span>` : ''} ${x.type ? `<span class="tag">${esc(x.type)}</span>` : ''}
+        <span class="note">${(x.bytes / 1024).toFixed(0)} KB${x.uploadedAt ? ' · ' + new Date(x.uploadedAt).toLocaleString() : ''}</span></div></div>`;
+    }).join('')}</div>`;
+  }
+  return h;
+}
+
+function display(key) {
+  const m = key.match(/^app\[(.+)\]\[([a-z]+)\]$/);
+  if (!m) return key;
+  const p = m[1].split('][');
+  return `${m[2]}/${p[0] === 'content' ? p.slice(1).join('.') : 'app.' + p.join('.')}`;
+}
+
+function render() {
+  $('#cfg').textContent = S.config;
+  $('#job').textContent = S.job ? `⏳ 正在执行 ${S.job.action}（${S.job.app}）…` : '';
+  $('#nav').innerHTML = S.apps.map((a) => {
+    const n = editedFields(a).length, m = pendingAssets(a).length;
+    return `<a data-app="${esc(a.key)}" class="${a.key === cur ? 'on' : ''}">${esc(a.name || a.key)}
+      ${n ? `<span class="badge" title="文本改动">${n}</span>` : ''}${m ? `<span class="badge gray" title="待上传图片">${m}</span>` : ''}
+      <small>${esc(a.key)} · ${a.appid} · ${a.languages.join(', ')}</small></a>`;
+  }).join('');
+  const a = app();
+  if (!a) { $('#main').innerHTML = '<div class="empty-state">配置里没有 App</div>'; return; }
+  const focus = document.activeElement?.id;
+  const busy = !!S.job;
+  $('#main').innerHTML = `<div class="tabs">
+      <button data-tab="text" class="${tab === 'text' ? 'on' : ''}">商店文本 ${editedFields(a).length ? `<span class="badge">${editedFields(a).length}</span>` : ''}</button>
+      <button data-tab="assets" class="${tab === 'assets' ? 'on' : ''}">图片 ${pendingAssets(a).length ? `<span class="badge gray">${pendingAssets(a).length}</span>` : ''}</button>
+    </div>` + (tab === 'text' ? renderText(a) : renderAssets(a));
+  if (busy) document.querySelectorAll('[data-run],[data-push],[data-assets]').forEach((b) => b.disabled = true);
+  if (focus === 'filter') { const f = $('#filter'); f.focus(); f.setSelectionRange(f.value.length, f.value.length); }
+}
+
+function log(line) {
+  const el = $('#log');
+  el.append(document.createTextNode(line + '\n'));
+  el.scrollTop = el.scrollHeight;
+}
+
+async function run(body, confirmText) {
+  if (confirmText && !confirm(confirmText)) return;
+  try { await api('/api/run', { app: cur, ...body }); } catch (e) { alert(e.message); }
+}
+
+document.addEventListener('click', async (e) => {
+  const t = e.target.closest('[data-app],[data-tab],[data-run],[data-push],[data-assets],[data-edit],[data-revert],[data-save],[data-cancel],[data-pickall]');
+  if (!t) return;
+  const a = app();
+  if (t.dataset.app) { cur = localStorage.appKey = t.dataset.app; editing = null; render(); }
+  else if (t.dataset.tab) { tab = localStorage.tab = t.dataset.tab; render(); }
+  else if (t.dataset.run) run({ action: t.dataset.run });
+  else if (t.dataset.push) {
+    const sel = editedFields(a).filter((f) => isPicked(f.key, f.remote?.kind !== 'conflict'));
+    const conflicts = sel.filter((f) => f.remote?.kind === 'conflict').length;
+    const dry = t.dataset.push === 'dry';
+    run({ action: 'push', only: sel.map((f) => f.key), dryRun: dry, force: conflicts > 0 },
+      dry ? null : `把 ${sel.length} 处改动保存到 Steamworks 后台？\n${conflicts ? `其中 ${conflicts} 处是冲突，会以本地为准覆盖线上。\n` : ''}保存的是草稿，不点发布就不会上线。`);
+  } else if (t.dataset.assets) {
+    const sel = a.assets.filter((x) => isPicked('asset:' + x.rel, x.state !== 'same')).map((x) => x.rel);
+    const dry = t.dataset.assets === 'dry';
+    run({ action: 'assets', only: sel, dryRun: dry }, dry ? null : `上传 ${sel.length} 张图片到 Steamworks 后台？\n会替换后台同类型、同语言的图片（截图会新增一张）。保存的是草稿。`);
+  } else if (t.dataset.edit) { editing = t.dataset.edit; render(); $('#ed')?.focus(); }
+  else if (t.dataset.cancel !== undefined) { editing = null; render(); }
+  else if (t.dataset.save) {
+    try { await api('/api/field', { app: cur, key: t.dataset.save, value: $('#ed').value }); editing = null; await load(); } catch (err) { alert(err.message); }
+  } else if (t.dataset.revert) {
+    const f = allFields(a).find((x) => x.key === t.dataset.revert);
+    if (confirm(`把 ${display(f.key)} 还原成上次同步时的值？`)) {
+      try { await api('/api/field', { app: cur, key: f.key, value: f.base }); await load(); } catch (err) { alert(err.message); }
+    }
+  } else if (t.dataset.pickall) {
+    const on = t.dataset.pickall === '1';
+    for (const f of editedFields(a)) setPick(f.key, on, f.remote?.kind !== 'conflict');
+  }
+});
+
+document.addEventListener('change', (e) => {
+  const t = e.target;
+  if (t.dataset.pick) setPick(t.dataset.pick, t.checked, t.dataset.def === '1');
+  else if (t.id === 'view') { view = localStorage.view = t.value; render(); }
+  else if (t.id === 'preview') { showPreview = t.checked; render(); }
+});
+document.addEventListener('input', (e) => { if (e.target.id === 'filter') { filter = e.target.value; render(); } });
+
+const es = new EventSource('/api/events');
+es.addEventListener('log', (e) => log(JSON.parse(e.data)));
+es.addEventListener('job', (e) => { const j = JSON.parse(e.data); S.job = j; render(); log(''); });
+es.addEventListener('done', (e) => { S.job = null; render(); log(JSON.parse(e.data).ok ? '— 完成 —' : '— 有错误，见上面的输出 —'); });
+// 编辑中不自动刷新，免得冲掉正在输入的内容
+es.addEventListener('changed', () => { if (!editing) load(); });
+
+load().catch((e) => { $('#main').innerHTML = `<div class="empty-state">加载失败：${esc(e.message)}</div>`; });
+</script>
+</body>
+</html>

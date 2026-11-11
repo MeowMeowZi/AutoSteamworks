@@ -7,7 +7,7 @@
   "scripts": {
     "autosw": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx test/e2e.ts && tsx test/assets-e2e.ts"
+    "test": "tsx test/e2e.ts && tsx test/assets-e2e.ts && tsx test/ui-e2e.ts"
   },
   "engines": {
     "node": ">=20"

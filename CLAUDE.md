@@ -13,6 +13,7 @@ Steamworks **没有**修改商店页面的官方 API，所以一切都靠操作�
 | `login`：弹出 Edge 手动登录，自动检测 `steamLoginSecure` Cookie | ✅ 真实后台验证 |
 | `pull` / `status` / `diff` / `push`：商店文本 | ✅ 真实后台验证（602 个字段，写入 schinese 简短描述并核对） |
 | `assets`：宣传图、库资源、截图 | ✅ 真实后台验证（上传了 schinese 形象图片，并从后台数据核对） |
+| `ui`：本地后台网页（查看、编辑、规则检查、勾选上传）+ `check`（离线规则检查） | ✅ 模拟后台测试通过；在真实项目上打开过页面（只读），还没在网页上真实上传过 |
 | `build`：生成 VDF + 调用 steamcmd | ⚠ 已实现但从未真实运行；配置里 `steamcmd.user` 还是占位值，`builds/windows` 目录也不存在 |
 | `push --publish`：发布 | ⏳ 未做，发布页面还没探查过 |
 | 成就 | ⏳ 未做（后台地址 `https://partner.steamgames.com/apps/achievements/5596340`） |
@@ -53,11 +54,18 @@ src/partner/store.ts       商店页拉取/推送；BUILTIN_IGNORE 里是内部�
 src/partner/assets.ts      图片上传 + 上传后核对
 src/local/storeFiles.ts    本地布局：_common.yaml + <语言>/*.bbcode + <语言>/_fields.yaml；快照
 src/local/assetFiles.ts    扫描 assets/{store,library}/<语言>/、assets/screenshots/；上传记录（sha256）
+src/ops.ts                 pull / diff / push / assets 的核心流程，命令行和网页共用（输出走 log 回调）
+src/lint.ts                规则检查（简短描述长度、BBCode 闭合、未翻译）
+src/ui/server.ts           `ui` 命令的 HTTP 服务：/api/state、/api/run（同一时间只跑一个任务）、/api/field、SSE /api/events（轮询文件 mtime）
+src/ui/page.html           网页，原生 JS，不需要构建
+templates/STEAM_RULES.md   `init` 复制到游戏项目里，给 AI 看的规则
 src/sync.ts                三方对比（本地 / 线上 / 快照）：local / remote / conflict / gone
 src/build/steampipe.ts     生成 VDF + 调用 steamcmd
 test/mock-partner.ts       模拟后台，按真实页面结构还原
 test/e2e.ts                商店文本端到端测试
 test/assets-e2e.ts         图片端到端测试
+test/ui-e2e.ts             网页接口端到端测试（在进程内启动 startUi）
+test/png.ts                测试用的 PNG 生成
 scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-assets、probe-assets2、probe-uploaded）
 ```
 
@@ -71,7 +79,9 @@ scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-
 
 - **先只读探查，再写代码**：遇到新的后台页面，先写 `scripts/` 下的只读脚本，看 DOM、全局变量、后台的 JS，必要时用 curl 下载 `public/javascript/*.js` 到临时目录用 grep 读。不要靠猜。
 - **第一次真实写入前要征得用户同意**：先 `--dry-run`，再真正执行，写完后要从后台核对结果。保存的都是草稿，不点发布就不会上线。
-- **每个功能都要有模拟后台的端到端测试**：`npm test` 同时跑两套测试。注意测试必须异步调用 CLI，因为模拟服务器在同一个进程里，同步调用会把它卡死。
+- **每个功能都要有模拟后台的端到端测试**：`npm test` 跑三套测试。注意测试必须异步调用 CLI，因为模拟服务器在同一个进程里，同步调用会把它卡死。
+- **规则检查只写确认过的规则**：简短描述的 200-300 是 2026-11-11 从真实编辑页的脚本里读到的（按 JS `.length` 计数，超过 300 只是标红，不阻止保存）。新增规则前先探查。
+- **用户的使用方式**：这个工具以后会放进其他准备上架的游戏项目里用。网页负责查看和上传；AI（Claude Code）按游戏项目里的 `STEAM_RULES.md` 改本地文件，不直接上传。
 - **用户的环境**：`NODE_ENV=production` 且 npm `omit=dev`，安装依赖要用 `npm i --include=dev`。TypeScript 7 需要在 tsconfig 里显式写 `"types": ["node"]`。
 - **在浏览器里执行的代码写成字符串**传给 `page.evaluate`，避免 tsx 往函数里注入 `__name`。
 - **和用户用中文交流**，代码注释和 CLI 输出也用中文。
@@ -79,14 +89,15 @@ scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-
 ## 常用命令
 
 ```powershell
-npm run autosw -- login | pull | status | diff | push [-n] [-f] | assets [-n] [-f] | inspect game | build game [-n]
+npm run autosw -- login | pull | status | check | diff | push [-n] [-f] | assets [-n] [-f] | ui | inspect game | build game [-n]
 npm run typecheck
 npm test
 ```
 
 ## 下一步候选（用户还没选）
 
-1. `push --publish`：先只读探查发布页面（App 管理首页上应该有入口），弄清发布流程和需要确认的地方。
-2. 构建上传：需要用户提供构建账号（`steamcmd.user`）和游戏导出目录（`contentRoot`），还要确认本机有没有装 steamcmd。
-3. 成就：探查 `apps/achievements/5596340`。
-4. 活动 / 公告，预告片。
+1. 打包成可安装的命令（package.json 的 `bin`），方便在其他游戏项目里用 `npx autosw` 直接调用，不用进这个仓库。
+2. `push --publish`：先只读探查发布页面（App 管理首页上应该有入口），弄清发布流程和需要确认的地方。
+3. 构建上传：需要用户提供构建账号（`steamcmd.user`）和游戏导出目录（`contentRoot`），还要确认本机有没有装 steamcmd。
+4. 成就：探查 `apps/achievements/5596340`。
+5. 活动 / 公告，预告片。
