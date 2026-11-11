@@ -90,6 +90,27 @@ try {
   out = await cli('assets', '--force'); console.log(out);
   assert.doesNotMatch(out, /EXIT/);
   assert.equal(srv.uploads.length, 6);
+
+  // 从后台删除：先演练，只找删除链接
+  out = await cli('delete-image', 'game', 'header|schinese', '-n'); console.log(out);
+  assert.match(out, /→ 删除 形象图片（简体中文）\s+会清空：app\[assets\]\[header_image\]\[image\]\[schinese\]、.*image2x_raw/);
+  assert.equal(srv.deletes.length, 0, '演练不删除');
+  out = await cli('delete-image', 'game', 'header|schinese', 'page_background|*'); console.log(out);
+  assert.doesNotMatch(out, /EXIT/);
+  assert.match(out, /✓ 已删除 形象图片（简体中文）（已核对）/);
+  assert.match(out, /✓ 已删除 页面背景（已核对）/);
+  assert.match(out, /本地文件 store\/schinese\/header_cn\.png 没有删除/);
+  assert.deepEqual(srv.deletes.filter((k) => k.includes('[image][')), ['app[assets][header_image][image][schinese]', 'app[assets][page_background_raw][image][english]']);
+  assert.match(await cli('assets', '-n'), /需要上传 2 张/, '删掉后本地的图变回待上传');
+  // 后台已经没有这张图了：找不到删除链接
+  out = await cli('delete-image', 'game', 'header|schinese'); console.log(out);
+  assert.match(out, /没有这张图的“删除”链接/); assert.match(out, /EXIT 1/);
+  // 后台拒绝
+  out = await cli('delete-image', 'game', 'small_capsule|schinese'); console.log(out);
+  assert.match(out, /后台返回失败：Delete failed/); assert.match(out, /EXIT 1/);
+  // 不认识的位置 / 不同步的语言：不打开后台就报错
+  out = await cli('delete-image', 'game', 'nope|english', 'header|japanese'); console.log(out);
+  assert.match(out, /nope\|english\s+不认识的位置/); assert.match(out, /japanese 不在这个 App 的同步语言里/);
   ok = true;
   console.log('\n✓ 图片上传测试全部通过');
 } finally {

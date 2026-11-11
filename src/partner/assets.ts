@@ -109,6 +109,73 @@ const UPLOAD_ONE = `(async (a) => {
   return { ok: true, ...res, verified: true };
 })`;
 
+/**
+ * 删除后台的一张图（宣传图 / 库资源 / 页面背景）。照搬后台自己的“删除”链接（2026-11-11 探查）：
+ * 每张已上传的图旁边有 <a onclick="SubmitQuickMessageUpdate({"app[assets][header_image][image][schinese]":"", ...image2x..., ...image2x_raw...})">删除</a>，
+ * SubmitQuickMessageUpdate 把这些字段加进 #quick_message_update 表单（sessionid、save_redirect）再带上 activetab 提交到 save/<itemid>。
+ * 要清空哪些字段直接从页面上的删除链接里读，不自己拼，所以只能删后台页面上真有删除按钮的图。
+ */
+const DELETE_ONE = `(async (a) => {
+  const readAssets = async () => {
+    try {
+      const html = await (await fetch(location.href, { credentials: 'same-origin' })).text();
+      const m = html.match(/name="serialized_app_data"\\s+value="([^"]*)"/);
+      if (!m) return null;
+      const ta = document.createElement('textarea'); ta.innerHTML = m[1];
+      return JSON.parse(ta.value).assets || {};
+    } catch (e) { return null; }
+  };
+  const prefix = 'app[assets][' + a.assetKey + ']';
+  const want = a.lang ? prefix + '[image][' + a.lang + ']' : null;
+  let fields = null;
+  for (const el of document.querySelectorAll('[onclick*="SubmitQuickMessageUpdate"]')) {
+    const m = (el.getAttribute('onclick') || '').match(/SubmitQuickMessageUpdate\\(\\s*(\\{[\\s\\S]*\\})\\s*\\)/);
+    if (!m) continue;
+    let obj; try { obj = JSON.parse(m[1]); } catch (e) { continue; }
+    const keys = Object.keys(obj);
+    if (!keys.length || !keys.every((k) => k.startsWith(prefix + '[') || k === prefix)) continue;
+    if (want && !keys.includes(want)) continue;
+    fields = obj; break;
+  }
+  if (!fields) return { ok: false, error: '后台页面上没有这张图的“删除”链接（可能已经删掉了）' };
+  if (a.dryRun) return { ok: true, fields };
+  const form = document.getElementById('quick_message_update');
+  if (!form) return { ok: false, fields, error: '页面上找不到 #quick_message_update 表单，后台页面可能改版了' };
+  const before = await readAssets();
+  const body = new URLSearchParams();
+  for (const el of form.querySelectorAll('input[name]')) body.append(el.name, el.value);
+  const tab = document.getElementById('activetab');
+  body.append('activetab', tab ? tab.value : 'tab_graphicalassets');
+  for (const k in fields) body.append(k, fields[k]);
+  const r = await fetch(form.action, { method: 'POST', body, credentials: 'same-origin' });
+  const finalUrl = r.url || '';
+  const errMsg = /[?&]ErrorMsg/.test(finalUrl)
+    ? Array.from(new URL(finalUrl).searchParams).filter(([k]) => k.startsWith('ErrorMsg')).map(([, v]) => v).join('；') : '';
+  if (!r.ok || errMsg) return { ok: false, fields, status: r.status, error: '后台返回失败' + (errMsg ? '：' + errMsg : '') };
+  return { ok: true, fields, status: r.status, before, after: await readAssets() };
+})`;
+
+export interface DeleteTarget { assetKey: string; lang?: string }
+export interface DeleteResult {
+  ok: boolean;
+  fields?: Record<string, string>;
+  status?: number;
+  error?: string;
+  before?: Record<string, any> | null;
+  after?: Record<string, any> | null;
+}
+
+/** 逐个删除（dryRun 时只找删除链接）。调用前先 openAssetsPage；每删一张都重新打开页面，保证删除链接是最新的 */
+export async function deleteAssets(page: Page, cfg: Config, app: AppConfig, targets: DeleteTarget[], dryRun: boolean) {
+  const results: DeleteResult[] = [];
+  for (const [i, t] of targets.entries()) {
+    if (i > 0 && !dryRun) await openAssetsPage(page, cfg, app);
+    results.push((await page.evaluate(`${DELETE_ONE}(${JSON.stringify({ ...t, dryRun })})`)) as DeleteResult);
+    if (!dryRun) await sleep(cfg.delayMs);
+  }
+  return results;
+}
+
 export async function openAssetsPage(page: Page, cfg: Config, app: AppConfig) {
   const url = cfg.storeEditUrl.replace('{appid}', String(app.appid));
   await gotoPartner(page, url + (url.includes('?') ? '&' : '?') + 'activetab=tab_graphicalassets');

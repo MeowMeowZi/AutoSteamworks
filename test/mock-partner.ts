@@ -13,6 +13,7 @@ const db: Record<string, Row> = {};
 let lastPost: Row | undefined;
 export interface Upload { key: string; filename: string; size: number; allAges: string | null }
 const uploads: Upload[] = [];
+const deletes: string[] = [];
 /** 和真实后台一样：serialized_app_data.assets[<类型 key>].image[<语言>] = '<hash>/<文件名>' */
 const assets: Record<string, Record<string, unknown>> = {};
 
@@ -30,6 +31,19 @@ const fresh = (): Row => {
 };
 const get = (id: string) => (db[id] ??= fresh());
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+
+/** 和真实后台一样：每张已上传的图旁边有一个“删除”链接，参数是要清空的字段 */
+function deleteLinks(id: string) {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries((assets[id] ?? {}) as Record<string, any>)) {
+    for (const lang of Object.keys(v?.image ?? {})) {
+      if (!v.image[lang]) continue;
+      const f = Object.fromEntries(['image', 'image2x', 'image2x_raw'].map((x) => [`app[assets][${k}][${x}][${lang}]`, '']));
+      out.push(`<div class="image_grid_col">(<a href="javascript:void(0)" onclick="${esc(`SubmitQuickMessageUpdate( ${JSON.stringify(f)} );`)}">删除</a>)</div>`);
+    }
+  }
+  return out.join('\n');
+}
 
 function page(id: string) {
   const d = get(id);
@@ -54,6 +68,11 @@ function page(id: string) {
     ${hidden}
     <input type="submit" id="submitBtn" value="保存">
   </form>
+  <input type="hidden" id="activetab" name="activetab" value="tab_graphicalassets">
+  <form id="quick_message_update" method="post" action="/admin/game/save/${id}">
+    <input type="hidden" name="sessionid" value="sess"><input type="hidden" id="save_redirect" name="save_redirect" value="edit">
+  </form>
+  ${deleteLinks(id)}
   <script>
     // 以下照抄真实页面（game_admin.js），用于图片上传测试
     var g_sessionID = 'sess';
@@ -119,6 +138,19 @@ export function start(port = 0) {
         return res.writeHead(200, { 'content-type': 'application/json' })
           .end(JSON.stringify({ redirect: `https://partner.steamgames.com/admin/game/edit/${m[1]}?${msg}&activetab=tab_graphicalassets` }));
       }
+      // 删除图片（#quick_message_update 提交）：app[assets][<key>][image][<lang>] = ''
+      const cleared = [...form.keys()].map((k) => /^app\[assets\]\[(\w+)\]\[image\]\[(\w+)\]$/.exec(k)).filter((x) => x);
+      if (cleared.length) {
+        const a = (assets[m[1]] ?? {}) as Record<string, any>;
+        // 删小宣传图（schinese）时模拟后台拒绝：不改数据，重定向地址里带 ErrorMsg
+        const reject = cleared.some((x) => x![1] === 'small_capsule' && x![2] === 'schinese');
+        if (!reject) {
+          for (const [, k, lang] of cleared as RegExpExecArray[]) if (a[k]?.image) delete a[k].image[lang];
+          deletes.push(...cleared.map((x) => x![0]));
+        }
+        const msg = reject ? 'ErrorMsg%5B0%5D=Delete+failed' : 'SuccessMsg%5B0%5D=Changes+saved';
+        return res.writeHead(302, { Location: `/admin/game/edit/${m[1]}?${msg}&activetab=tab_graphicalassets` }).end();
+      }
       const d = get(m[1]);
       lastPost = {};
       for (const [k, v] of form) if (typeof v === 'string') lastPost[k] = v;
@@ -130,9 +162,9 @@ export function start(port = 0) {
     }
     res.writeHead(404).end();
   });
-  return new Promise<{ url: string; close: () => void; db: typeof db; lastPost: () => Row | undefined; uploads: Upload[] }>((r) =>
+  return new Promise<{ url: string; close: () => void; db: typeof db; lastPost: () => Row | undefined; uploads: Upload[]; deletes: string[] }>((r) =>
     srv.listen(port, '127.0.0.1', () => r({
-      url: `http://127.0.0.1:${(srv.address() as AddressInfo).port}`, close: () => srv.close(), db, lastPost: () => lastPost, uploads,
+      url: `http://127.0.0.1:${(srv.address() as AddressInfo).port}`, close: () => srv.close(), db, lastPost: () => lastPost, uploads, deletes,
     })));
 }
 
