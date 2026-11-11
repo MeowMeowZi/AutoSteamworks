@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import type { Page } from 'playwright-core';
@@ -44,6 +44,14 @@ program.command('init').description('在当前目录生成示例配置 steam.con
     copyFileSync(src, dst);
     console.log(`已生成 ${dst}`);
   }
+  // 快照、上传记录不该进游戏项目的 git；旧版的登录 Cookie 也可能在这里
+  const gi = '.gitignore';
+  const text = existsSync(gi) ? readFileSync(gi, 'utf8') : '';
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
+  if (!lines.some((l) => l === '.autosw/' || l === '.autosw' || l === '/.autosw/')) {
+    appendFileSync(gi, (text && !text.endsWith('\n') ? '\n' : '') + '# AutoSteamworks 的本地状态\n.autosw/\n');
+    console.log('已把 .autosw/ 加进 .gitignore');
+  }
   console.log('请在 steam.config.yaml 里填入 appid，在 STEAM_RULES.md 末尾填写本项目的风格和术语表');
 });
 
@@ -66,7 +74,7 @@ program.command('login').description('打开浏览器手动登录 Steamworks，�
   }
   if (ok) await sleep(3000); // 让 Steam 完成重定向、写完剩下的 Cookie
   await ctx.close().catch(() => {});
-  console.log(ok ? '✓ 登录成功，会话已保存在 .autosw/profile' : '✗ 仍然是未登录状态，请重试');
+  console.log(ok ? `✓ 登录成功，会话已保存在 ${c.profileDir}` : '✗ 仍然是未登录状态，请重试');
   process.exitCode = ok ? 0 : 1;
 });
 

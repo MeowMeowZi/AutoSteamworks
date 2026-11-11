@@ -14,6 +14,7 @@ const srv = await start();
 const ws = mkdtempSync(join(tmpdir(), 'autosw-ui-'));
 const cfgFile = join(ws, 'steam.config.yaml');
 writeFileSync(cfgFile, `
+browser: { profileDir: .autosw/profile }  # 不用真实的共享登录
 partner: { storeEditUrl: "${srv.url}/admin/game/editbyappid/{appid}", delayMs: 0 }
 languages: [english, schinese]
 apps:

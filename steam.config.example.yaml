@@ -2,6 +2,8 @@
 
 browser:
   channel: msedge          # 直接用系统自带的 Edge；也可以填 chrome
+  # 登录信息默认存在 ~/.autosteamworks/profile，所有项目共用；想单独登录就指定一个目录
+  # profileDir: .autosw/profile
 
 partner:
   # 商店编辑页地址（已经用真实后台确认过），一般不用改

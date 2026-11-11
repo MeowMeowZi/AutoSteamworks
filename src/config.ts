@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import YAML from 'yaml';
 
 export interface DepotConfig {
@@ -45,6 +46,8 @@ export interface AppConfig {
 export interface Config {
   root: string;
   stateDir: string;
+  /** 浏览器配置文件目录（里面有登录 Cookie） */
+  profileDir: string;
   browserChannel: string;
   /** 商店编辑页地址，{appid} 会被替换 */
   storeEditUrl: string;
@@ -99,9 +102,15 @@ export function loadConfig(path = 'steam.config.yaml'): Config {
   });
   if (apps.length === 0) throw new Error('配置里没有任何 apps');
 
+  const stateDir = abs(raw.stateDir ?? '.autosw');
+  // 默认所有游戏项目共用一个登录（同一个 Steamworks 账号）；项目里已有旧的 profile 时继续用它
+  const legacyProfile = join(stateDir, 'profile');
+  const profileDir = raw.browser?.profileDir ? abs(raw.browser.profileDir)
+    : existsSync(legacyProfile) ? legacyProfile : join(homedir(), '.autosteamworks', 'profile');
   return {
     root,
-    stateDir: abs(raw.stateDir ?? '.autosw'),
+    stateDir,
+    profileDir,
     browserChannel: raw.browser?.channel ?? 'msedge',
     storeEditUrl: raw.partner?.storeEditUrl ?? DEFAULT_STORE_EDIT_URL,
     formSelector: raw.partner?.formSelector ?? '#gameform',

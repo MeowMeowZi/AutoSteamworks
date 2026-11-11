@@ -4,8 +4,18 @@
   "private": true,
   "type": "module",
   "description": "把本地文件同步到 Steamworks 后台（商店页面、构建等），支持多 App",
+  "bin": {
+    "autosw": "bin/autosw.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "templates",
+    "steam.config.example.yaml",
+    "README.md"
+  ],
   "scripts": {
-    "autosw": "tsx src/cli.ts",
+    "autosw": "node bin/autosw.js",
     "typecheck": "tsc --noEmit",
     "test": "tsx test/e2e.ts && tsx test/assets-e2e.ts && tsx test/ui-e2e.ts"
   },
@@ -16,12 +26,12 @@
     "commander": "^15.1.0",
     "diff": "^9.0.0",
     "playwright-core": "^1.65.0",
-    "yaml": "^2.9.1"
+    "yaml": "^2.9.1",
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
     "@types/diff": "^7.0.2",
     "@types/node": "^26.6.6",
-    "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }
 }

@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import { chromium, type BrowserContext, type Page } from 'playwright-core';
 import type { Config } from './config.js';
 
@@ -6,7 +5,7 @@ export const PARTNER_HOME = 'https://partner.steamgames.com/';
 
 /** 持久化的浏览器配置文件：登录一次，之后复用 Cookie */
 export async function openBrowser(cfg: Config, headless: boolean) {
-  const ctx: BrowserContext = await chromium.launchPersistentContext(join(cfg.stateDir, 'profile'), {
+  const ctx: BrowserContext = await chromium.launchPersistentContext(cfg.profileDir, {
     channel: cfg.browserChannel === 'chromium' ? undefined : cfg.browserChannel,
     headless,
     viewport: { width: 1400, height: 900 },

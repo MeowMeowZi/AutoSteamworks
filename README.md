@@ -6,23 +6,37 @@ Steamworks **没有**修改商店页面的官方 API。这个工具通过浏览�
 
 ## 快速开始
 
+安装一次，之后在任何游戏项目里都能用 `autosw` 命令：
+
 ```powershell
-npm i --include=dev          # 本机设置了 NODE_ENV=production，需要显式安装开发依赖
-npm run autosw -- init       # 生成 steam.config.yaml，填入 appid
-npm run autosw -- login      # 弹出 Edge，手动登录一次（包括 Steam Guard）
-npm run autosw -- inspect game -l english --headed   # 第一次使用前必须做，见下面的“校准”
-npm run autosw -- pull       # 把所有 App、所有语言的商店内容拉到 apps/<key>/store/<lang>/
-# …编辑本地文件…
-npm run autosw -- status     # 离线查看改了什么
-npm run autosw -- diff       # 和线上做三方对比（本地 / 线上 / 上次同步）
-npm run autosw -- push -n    # 先演练一遍
-npm run autosw -- push       # 保存到后台（不会自动发布）
-npm run autosw -- assets -n  # 看看 apps/game/assets 里的图片会被识别成什么
-npm run autosw -- assets     # 上传新增或改过的图片（说明见 apps/game/assets/README.md）
-npm run autosw -- build game # 用 steamcmd 上传构建
+npm i -g github:MeowMeowZi/AutoSteamworks    # 更新时再运行一次同样的命令
 ```
 
-用 `-c path/to/steam.config.yaml` 可以把配置和内容放在另一个 git 仓库里。
+在游戏项目的根目录：
+
+```powershell
+autosw init          # 生成 steam.config.yaml、STEAM_RULES.md，并把 .autosw/ 加进 .gitignore
+autosw login         # 弹出 Edge，手动登录一次（包括 Steam Guard）；所有项目共用这个登录
+autosw pull          # 把所有 App、所有语言的商店内容拉到 apps/<key>/store/<lang>/
+autosw ui            # 打开本地后台网页，看内容、看改动、勾选上传
+```
+
+命令行也能完成全部操作：
+
+```powershell
+autosw status        # 离线查看改了什么
+autosw check         # 离线按规则检查
+autosw diff          # 和线上做三方对比（本地 / 线上 / 上次同步）
+autosw push -n       # 先演练一遍
+autosw push          # 保存到后台（不会自动发布）
+autosw assets -n     # 看看 apps/<key>/assets 里的图片会被识别成什么
+autosw assets        # 上传新增或改过的图片
+autosw build game    # 用 steamcmd 上传构建
+```
+
+- 用 `-c path/to/steam.config.yaml` 指定别处的配置；内容和状态目录都相对于配置文件。
+- 登录信息默认存在 `~/.autosteamworks/profile`，所有项目共用。项目里已经有旧的 `.autosw/profile` 时继续用它；也可以在配置里用 `browser.profileDir` 指定。
+- 在这个仓库里开发时，用 `npm i --include=dev` 安装依赖（本机设置了 `NODE_ENV=production`），然后用 `npm run autosw -- <命令>`。
 
 ## 后台网页和 AI 修改
 
