@@ -44,7 +44,7 @@ autosw shortcut      # 重新创建桌面和开始菜单快捷方式
 
 - 用 `-c path/to/steam.config.yaml` 指定别处的配置；内容和状态目录都相对于配置文件。
 - 登录信息和项目列表存在 `~/.autosteamworks/`。项目里已经有旧的 `.autosw/profile` 时继续用它；也可以在配置里用 `browser.profileDir` 指定。
-- 在这个仓库里开发时，用 `npm i --include=dev` 安装依赖（本机设置了 `NODE_ENV=production`），然后用 `npm run autosw -- <命令>`。
+- 在这个仓库里开发时，双击 `start.bat` 就会用仓库里的代码打开网页（第一次会自动安装依赖）；也可以 `npm i --include=dev` 后用 `npm run autosw -- <命令>`。
 
 ## 后台网页和 AI 修改
 

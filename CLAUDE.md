@@ -52,6 +52,7 @@ Steamworks **没有**修改商店页面的官方 API，所以一切都靠操作�
 
 ```
 bin/autosw.js              命令入口：用 tsx 的 register() 直接加载 src/cli.ts，没有构建步骤（tsx 因此是运行时依赖）
+start.bat                  开发用启动脚本（双击 = node bin/autosw.js ui），CRLF 换行，见 .gitattributes
 src/cli.ts                 所有命令；不带命令时默认运行 ui，端口已被占用时直接打开已有的网页
 src/projects.ts            项目列表（~/.autosteamworks/projects.json）、网页上的初始化、设置读写（YAML Document，保留注释）、STEAM_RULES.md 读写
 src/desktop.ts             Windows：创建快捷方式（WScript.Shell）、选择文件夹对话框（FolderBrowserDialog）、打开网址
