@@ -2,7 +2,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { appHome, loadConfig, selectApps, type AppConfig, type Config } from '../config.js';
+import { appHome, loadConfig, readSettings, selectApps, writeSettings, type AppConfig, type Config } from '../config.js';
 import { STEAM_LANGS, writeLocalField } from '../local/storeFiles.js';
 import { readTextState, textView } from '../textState.js';
 import type { Change } from '../sync.js';
@@ -12,9 +12,9 @@ import { readMeta } from '../partner/meta.js';
 import { LANG_NAMES } from '../fieldInfo.js';
 import { imageBoard } from './images.js';
 import { addToInbox, describeItem, placeImage, sortInbox } from '../local/inbox.js';
-import {
-  addProject, createProjectByAppid, initProject, projectsRoot, listProjects, projectSummary, aiPrompt, readRules, readSettings, removeProject, requireProject, upgradeRules, writeRules, writeSettings,
-} from '../projects.js';
+import { addProject, createProjectByAppid, projectsRoot, listProjects, projectSummary, removeProject, requireProject } from '../projects.js';
+import { initProject } from '../projectInit.js';
+import { aiPrompt, readRules, upgradeRules, writeRules } from '../aiRules.js';
 import { createShortcuts, isWindows, pickFolder } from '../desktop.js';
 
 /** 网页发来的请求。delete-images 的位置放在 only 里 */

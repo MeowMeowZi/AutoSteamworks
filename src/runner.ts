@@ -1,6 +1,5 @@
 // 操作运行：读配置 → 选 App → 开浏览器 → 逐个 App 执行 → 关浏览器 → 汇总结果。命令行和网页都只调用 runOperation。
-import { join } from 'node:path';
-import { appHome, loadConfig, selectApps, type Config } from './config.js';
+import { defaultBrowser, loadConfig, selectApps } from './config.js';
 import { NotLoggedInError, openBrowser } from './browser.js';
 import type { Change } from './sync.js';
 import { assetsApp, deleteImagesApp, diffApp, DRAFT_NOTE, loginFlow, printChange, pullApp, pushApp, type Log } from './ops.js';
@@ -52,9 +51,7 @@ export async function runOperation(req: RunRequest, log: Log): Promise<RunResult
   const result: RunResult = { ok: true, changedRemote: false, needLogin: false, apps: [] };
 
   if (req.action === 'login') {
-    const c: Pick<Config, 'profileDir' | 'browserChannel'> = req.configPath
-      ? loadConfig(req.configPath)
-      : { profileDir: join(appHome(), 'profile'), browserChannel: 'msedge' };
+    const c = req.configPath ? loadConfig(req.configPath) : defaultBrowser();
     result.ok = await loginFlow(c, log);
     return result;
   }

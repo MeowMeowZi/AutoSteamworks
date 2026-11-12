@@ -61,10 +61,12 @@ Steamworks **没有**修改商店页面的官方 API，所以一切都靠操作�
 bin/autosw.js              命令入口：用 tsx 的 register() 直接加载 src/cli.ts，没有构建步骤（tsx 因此是运行时依赖）
 start.bat                  开发用启动脚本（双击 = node bin/autosw.js ui），CRLF 换行，见 .gitattributes
 src/cli.ts                 所有命令；不带命令时默认运行 ui，端口已被占用时直接打开已有的网页
-src/projects.ts            项目列表（~/.autosteamworks/projects.json）、网页上的初始化、设置读写（YAML Document，保留注释）、STEAM_RULES.md 读写
+src/projects.ts            项目列表（~/.autosteamworks/projects.json）、按 App ID 新建项目
+src/projectInit.ts         新项目初始化：配置文件、待分类目录、规则文件、AI 指引、.gitignore
+src/aiRules.ts             STEAM_RULES.md 读写和升级、CLAUDE.md / AGENTS.md 指引、“复制给 AI”的内容
 src/desktop.ts             Windows：创建快捷方式（WScript.Shell）、选择文件夹对话框（FolderBrowserDialog）、打开网址
 install.ps1                一键安装脚本，必须保持 UTF-8 无 BOM（BOM 会让 irm | iex 报错）
-src/config.ts              steam.config.yaml 解析（多 App、各 App 可覆盖 store/assets/build 配置）
+src/config.ts              项目配置：steam.config.yaml 的唯一读写入口。默认值（DEFAULTS）和继承（App 自己的 → 顶层 → 默认）只写在这里；loadConfig 给同步用，readSettings / writeSettings 给设置页用（显示实际生效的值），addAppLanguages、createConfig。别处不要直接解析配置文件或再写一遍默认值
 src/browser.ts             持久化浏览器、登录检测、settle()
 src/partner/form.ts        通用表单读写（按 name 定位；hidden/radio/checkbox）+ FormData 提交
 src/partner/store.ts       商店页拉取/推送；BUILTIN_IGNORE 里是内部字段
@@ -96,6 +98,7 @@ test/inbox-test.ts         收件箱整理测试（离线）
 test/cells-test.ts         图片格子测试（离线）
 test/plan-test.ts          同步计划测试（离线）
 test/text-state-test.ts    文本状态测试（离线）
+test/config-test.ts        项目配置测试（离线）：默认值、继承、设置页和同步一致、addAppLanguages
 test/runner-test.ts        runner 测试（进程内调用 runOperation）：结果字段、未登录（模拟后台 appid 999 跳回 /?goto=）、changedRemote
 test/png.ts                测试用的 PNG 生成
 scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-assets、probe-assets2、probe-uploaded、probe-delete、probe-delete2）
@@ -111,7 +114,7 @@ scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-
 
 - **先只读探查，再写代码**：遇到新的后台页面，先写 `scripts/` 下的只读脚本，看 DOM、全局变量、后台的 JS，必要时用 curl 下载 `public/javascript/*.js` 到临时目录用 grep 读。不要靠猜。
 - **第一次真实写入前要征得用户同意**：先 `--dry-run`，再真正执行，写完后要从后台核对结果。保存的都是草稿，不点发布就不会上线。
-- **每个功能都要有模拟后台的端到端测试**：`npm test` 跑八套测试。注意测试必须异步调用 CLI，因为模拟服务器在同一个进程里，同步调用会把它卡死。
+- **每个功能都要有模拟后台的端到端测试**：`npm test` 跑九套测试。注意测试必须异步调用 CLI，因为模拟服务器在同一个进程里，同步调用会把它卡死。
 - **测试配置必须写 `browser.profileDir`**（指向临时目录），否则会用到真实的共享登录；网页测试还要设 `AUTOSW_HOME` 到临时目录，否则会改到真实的项目列表。
 - **网页接口都带 project 参数**（配置文件路径），服务器只接受项目列表里的路径。同一时间只跑一个任务（共用一个浏览器配置文件）。
 - **在 Bash 里用 heredoc / sed 写含反斜杠的代码很容易被吃掉**：这类修改用 Write 写 .autosw/ 下的临时 python 脚本再运行，或者直接用 Edit。
