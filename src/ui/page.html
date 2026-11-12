@@ -17,14 +17,19 @@
   code, .mono { font-family:Consolas, "Microsoft YaHei", monospace; font-size:12px; }
   header { display:flex; align-items:center; gap:16px; padding:10px 20px; background:#1b2838; color:#fff; position:sticky; top:0; z-index:10; height:48px; }
   header h1 { font-size:16px; margin:0; }
-  header .cfg { color:#9fb3c8; font-size:12px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  header .sp { flex:1; }
+  header select { background:#2a3f55; color:#fff; border:1px solid #3d5266; border-radius:6px; padding:4px 8px; font-size:13px; max-width:320px; }
+  header select:hover { border-color:#c7d5e0; }
+  header .hlink { color:#9fb3c8; font-size:12px; margin-left:8px; }
+  header .hlink:hover { color:#fff; }
   header .job { font-size:13px; color:#ffd666; }
   header .hb { background:transparent; color:#c7d5e0; border:1px solid #3d5266; border-radius:6px; padding:4px 12px; cursor:pointer; font-family:inherit; font-size:13px; }
   header .hb:hover { border-color:#c7d5e0; color:#fff; }
   nav .sec { padding:10px 16px 4px; font-size:12px; color:var(--muted); }
-  nav .proj { padding:0 12px 8px; border-bottom:1px solid var(--line); margin-bottom:6px; }
-  nav .proj select { width:100%; }
-  nav .link { display:block; padding:8px 16px; cursor:pointer; color:inherit; text-decoration:none; border-left:3px solid transparent; }
+  nav .link { display:flex; align-items:center; gap:6px; padding:9px 16px; cursor:pointer; color:inherit; text-decoration:none; border-left:3px solid transparent; }
+  nav .link:hover:not(.on) { background:#f6f7f9; }
+  nav .link .pills { margin-left:auto; display:flex; gap:4px; }
+  nav .navfoot { margin-top:auto; border-top:1px solid var(--line); padding-top:6px; }
   nav .link.on { background:var(--accent-bg); border-left-color:var(--accent); color:var(--accent); font-weight:600; }
   .form { display:grid; grid-template-columns:150px 1fr; gap:12px 16px; align-items:start; }
   .form > label { padding-top:6px; font-weight:600; font-size:13px; }
@@ -40,7 +45,8 @@
   #dropmask { display:none; position:fixed; inset:auto 20px 20px auto; z-index:50; background:var(--accent); color:#fff; padding:10px 16px; border-radius:8px; font-size:14px; box-shadow:0 4px 16px rgba(0,0,0,.2); pointer-events:none; }
   body.dragging #dropmask { display:block; }
   .layout { display:flex; min-height:calc(100vh - 48px); }
-  nav { width:230px; flex:none; border-right:1px solid var(--line); background:var(--card); padding:12px 0; }
+  nav { width:200px; flex:none; border-right:1px solid var(--line); background:var(--card); padding:12px 0 6px; display:flex; flex-direction:column;
+    position:sticky; top:48px; height:calc(100vh - 48px - 34px); overflow:auto; align-self:flex-start; }
   nav .app { display:block; padding:10px 16px; cursor:pointer; border-left:3px solid transparent; }
   nav .app.on { background:var(--accent-bg); border-left-color:var(--accent); }
   nav .app b { display:block; }
@@ -66,18 +72,17 @@
   /* 概览 */
   .overview { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 20px; margin-bottom:14px; }
   .overview h2 { margin:0 0 2px; font-size:18px; }
-  .flow { display:flex; align-items:stretch; margin:14px 0 4px; }
-  .flow .step { flex:1; border:1px solid var(--line); padding:10px 14px; background:#fafbfc; }
-  .flow .step:first-child { border-radius:8px 0 0 8px; } .flow .step:nth-child(5) { border-radius:0 8px 8px 0; }
-  .flow .step + .arrow + .step { border-left:0; }
-  .flow .step .t { font-weight:600; font-size:13px; }
-  .flow .step .n { font-size:22px; font-weight:700; line-height:1.3; }
-  .flow .step .n.sm { font-size:15px; padding:4px 0; }
-  .flow .step .d { font-size:12px; color:var(--muted); }
-  .flow .arrow { display:flex; align-items:center; padding:0 6px; color:#9aa4b2; font-size:18px; }
-  .flow .step.hot { background:var(--info-bg); border-color:#bcd7f5; }
-  .flow .step.check { border-radius:8px; margin-left:16px; flex:0.8; }
-  .flow .step.bad { background:var(--err-bg); border-color:#f3c2c2; }
+  .overview.bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 20px; }
+  .overview.bar .ttl { margin-right:8px; }
+  .overview.bar h2 { font-size:17px; line-height:1.3; }
+  .stats { display:flex; gap:6px; flex-wrap:wrap; }
+  .stat { display:inline-flex; align-items:baseline; gap:3px; padding:4px 12px; border-radius:16px; font-size:13px; text-decoration:none; border:1px solid transparent; }
+  .stat b { font-size:16px; }
+  .stat.zero { color:#9aa4b2; background:var(--gray-bg); }
+  .stat.info { color:var(--info); background:var(--info-bg); border-color:#bcd7f5; }
+  .stat.err { color:var(--err); background:var(--err-bg); border-color:#f3c2c2; }
+  .stat.warn { color:var(--warn); background:var(--warn-bg); border-color:#f5d9a8; }
+  .stat:hover { border-color:currentColor; }
 
   /* 结果框 */
   .result { border-radius:10px; padding:12px 16px; margin-bottom:14px; border:1px solid; }
@@ -163,15 +168,15 @@
   .shots { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:10px; }
 
   /* 底部操作栏 + 日志 */
-  .actionbar { position:fixed; left:230px; right:0; bottom:34px; background:var(--card); border-top:1px solid var(--line); padding:10px 24px; display:flex; align-items:center; gap:10px; z-index:5; box-shadow:0 -2px 8px rgba(0,0,0,.05); }
-  #logbar { position:fixed; left:230px; right:0; bottom:0; height:34px; background:#0d1117; color:#c9d1d9; font-size:12px; display:flex; align-items:center; gap:10px; padding:0 16px; cursor:pointer; z-index:6; overflow:hidden; white-space:nowrap; }
-  #log { position:fixed; left:230px; right:0; bottom:34px; height:260px; margin:0; background:#0d1117; color:#c9d1d9; font:12px/1.5 Consolas, monospace; padding:8px 16px; overflow:auto; white-space:pre-wrap; z-index:7; border-top:2px solid #30363d; display:none; }
+  .actionbar { position:fixed; left:200px; right:0; bottom:34px; background:var(--card); border-top:1px solid var(--line); padding:10px 24px; display:flex; align-items:center; gap:10px; z-index:5; box-shadow:0 -2px 8px rgba(0,0,0,.05); }
+  #logbar { position:fixed; left:200px; right:0; bottom:0; height:34px; background:#0d1117; color:#c9d1d9; font-size:12px; display:flex; align-items:center; gap:10px; padding:0 16px; cursor:pointer; z-index:6; overflow:hidden; white-space:nowrap; }
+  #log { position:fixed; left:200px; right:0; bottom:34px; height:260px; margin:0; background:#0d1117; color:#c9d1d9; font:12px/1.5 Consolas, monospace; padding:8px 16px; overflow:auto; white-space:pre-wrap; z-index:7; border-top:2px solid #30363d; display:none; }
   body.logopen #log { display:block; }
   .empty-state { padding:40px; text-align:center; color:var(--muted); }
 </style>
 </head>
 <body>
-<header><h1>AutoSteamworks</h1><span class="cfg" id="cfg"></span><span class="job" id="job"></span>
+<header><h1>AutoSteamworks</h1><span id="hproj"></span><span class="sp"></span><span class="job" id="job"></span>
   <button class="hb" data-login title="所有项目共用一个 Steam 登录。第一次使用或者登录过期时点这里">登录 Steam</button>
   <button class="hb" data-quit title="停止这个后台网页（下次从桌面快捷方式打开）">退出</button></header>
 <div class="layout">
@@ -272,31 +277,23 @@ function diffHtml(f) {
 // ================= 概览 =================
 function renderOverview(a) {
   const s = a.summary;
-  const toUpload = s.textEdits + s.imagesPending;
-  return `<div class="overview">
-    <div class="row"><div><h2>${esc(a.name || a.key)}</h2>
-      <span class="muted small">App ${a.appid} · 同步语言：${a.languages.map(langName).join('、')}</span></div>
-      <span class="sp"></span>
-      <span class="small muted">后台状态：${ago(a.remoteAt)}</span>
-      <button class="b" data-run="diff" title="读一次后台，看看后台现在是什么样（不会修改任何东西）">刷新后台状态</button>
-      <button class="b" data-run="pull" title="把后台内容下载到本地。本地有没上传的改动时不会覆盖">从后台拉取</button>
+  const stat = (n, label, cls, tabId, title) => `<a class="stat ${n ? cls : 'zero'}" data-tab="${tabId}" title="${title}"><b>${n}</b>${label}</a>`;
+  return `<div class="overview bar">
+    <div class="ttl"><h2>${esc(a.name || a.key)}</h2>
+      <div class="muted small">App ${a.appid} · ${a.languages.map(langName).join('、')}</div></div>
+    <div class="stats">
+      ${s.textEdits || s.imagesPending
+        ? (s.textEdits ? stat(s.textEdits, '处文本待上传', 'info', 'text', '本地改过、还没上传到后台的文本') : '')
+          + (s.imagesPending ? stat(s.imagesPending, '张图片待上传', 'info', 'images', '本地新增或改过、还没上传到后台的图片') : '')
+        : '<span class="stat zero">✓ 没有待上传的改动</span>'}
+      ${s.errors ? stat(s.errors, '个错误', 'err', 'issues', '规则检查发现的错误') : ''}
+      ${s.warnings ? stat(s.warnings, '个提醒', 'warn', 'issues', '规则检查发现的提醒') : ''}
+      ${s.errors || s.warnings ? '' : '<span class="stat zero">✓ 规则检查通过</span>'}
     </div>
-    <div class="flow">
-      <div class="step ${toUpload ? 'hot' : ''}"><div class="t">① 本地文件</div>
-        <div class="n">${toUpload || '✓'}</div>
-        <div class="d">${toUpload ? `待上传：文本 ${s.textEdits} 处、图片 ${s.imagesPending} 张` : '没有待上传的改动'}</div></div>
-      <div class="arrow">→</div>
-      <div class="step"><div class="t">② 后台草稿</div>
-        <div class="n sm">在本页底部点“上传”</div>
-        <div class="d">保存为草稿，商店上还看不到</div></div>
-      <div class="arrow">→</div>
-      <div class="step"><div class="t">③ 发布上线</div>
-        <div class="n sm">在 Steamworks 后台手动发布</div>
-        <div class="d">商店页管理 → 发布页签，审核后上线</div></div>
-      <div class="step check ${s.errors ? 'bad' : ''}"><div class="t">规则检查</div>
-        <div class="n">${s.errors || s.warnings ? `${s.errors ? `<span style="color:var(--err)">${s.errors} 错误</span> ` : ''}${s.warnings ? `<span style="color:var(--warn);font-size:16px">${s.warnings} 提醒</span>` : ''}` : '✓'}</div>
-        <div class="d">${s.errors || s.warnings ? '<a data-tab="issues">查看问题</a>' : '没有发现问题'}</div></div>
-    </div>
+    <span class="sp"></span>
+    <span class="small muted" title="后台状态是上次刷新或拉取时读到的">后台状态 ${ago(a.remoteAt)}</span>
+    <button class="b" data-run="diff" title="读一次后台，看看后台现在是什么样（不会修改任何东西）">刷新后台状态</button>
+    <button class="b" data-run="pull" title="把后台内容下载到本地。本地有没上传的改动时不会覆盖">从后台拉取</button>
   </div>`;
 }
 
@@ -304,14 +301,14 @@ function renderResult(a) {
   const r = S.lastResult;
   if (!r || resultSeen === r.at) return '';
   if (r.action !== 'login' && (r.project !== project || r.app !== a?.key)) return '';
-  const title = !r.ok ? `${ACTION[r.action]}失败` : r.dryRun ? `${ACTION[r.action]}：演练完成（没有真正上传）` : `${ACTION[r.action]}完成`;
+  const title = !r.ok ? `${ACTION[r.action]}失败` : r.dryRun ? `${ACTION[r.action]}：预览完成（没有真正上传）` : `${ACTION[r.action]}完成`;
   const cls = !r.ok ? 'fail' : r.dryRun ? 'dry' : 'ok';
   return `<div class="result ${cls}"><div class="row"><h3>${!r.ok ? '✗' : '✓'} ${esc(title)}</h3><span class="sp"></span>
     <span class="small muted">${new Date(r.at).toLocaleTimeString()}</span> <a data-dismiss="${esc(r.at)}">关闭</a></div>
     ${r.lines.length ? `<ul>${r.lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}
-    ${r.changedRemote ? '<div class="small" style="margin-top:6px">已保存为后台草稿。在 Steamworks 后台的“发布”页签发布后，商店上才会看到。</div>' : ''}
+    ${r.changedRemote ? '<div class="small" style="margin-top:6px">已保存为<b>后台草稿</b>，商店上还看不到。下一步：在 Steamworks 后台“商店页管理 → 发布”页签发布，审核后上线。</div>' : ''}
     ${r.needLogin ? '<div style="margin-top:8px"><button class="b primary" data-login>登录 Steam</button> <span class="small">Steam 登录过期了，登录后再试一次</span></div>' : ''}
-    ${r.ok && r.action === 'login' ? '<div class="small" style="margin-top:6px">下一步：在左边选一个 App，点“从后台拉取”。</div>' : ''}
+    ${r.ok && r.action === 'login' ? '<div class="small" style="margin-top:6px">下一步：点上面的“从后台拉取”，把商店内容下载到本地。</div>' : ''}
     ${!r.ok ? '<div class="small" style="margin-top:6px"><a data-openlog>打开完整日志</a></div>' : ''}
   </div>`;
 }
@@ -569,18 +566,20 @@ function renderIssues(a) {
 // ================= 底部操作栏 =================
 function renderActionBar(a) {
   const bar = $('#actionbar');
-  if (!a || (!a.pulled && tab === 'text') || tab === 'issues') { bar.style.display = 'none'; return; }
+  // 没有可上传的内容时整条隐藏
+  const nothing = tab === 'text' ? !editedFields(a ?? { common: [], localized: [] }).length : !a?.images.pending.length;
+  if (!a || (!a.pulled && tab === 'text') || tab === 'issues' || nothing) { bar.style.display = 'none'; return; }
   const busy = !!S.job;
   if (tab === 'text') {
     const sel = selectedFields(a), conflicts = sel.filter((f) => f.remote?.kind === 'conflict').length;
     bar.innerHTML = `<span>文本改动 <b>${editedFields(a).length}</b> 处，已勾选 <b>${sel.length}</b> 处${conflicts ? `（其中 ${conflicts} 处冲突，会用本地覆盖后台）` : ''}</span>
       <a class="small" data-pickall="1">全选</a><a class="small" data-pickall="0">全不选</a><span class="sp"></span>
-      <button class="b" data-push="dry" ${sel.length && !busy ? '' : 'disabled'} title="打开后台对比一遍，显示会改什么，不真正保存">演练</button>
+      <button class="b" data-push="dry" ${sel.length && !busy ? '' : 'disabled'} title="打开后台对比一遍，显示会改什么，不真正保存">预览将要上传的内容</button>
       <button class="b primary" data-push="real" ${sel.length && !busy ? '' : 'disabled'}>上传 ${sel.length} 处到后台草稿</button>`;
   } else {
     const sel = selectedImages(a);
     bar.innerHTML = `<span>图片待上传 <b>${a.images.pending.length}</b> 张，已勾选 <b>${sel.length}</b> 张</span><span class="sp"></span>
-      <button class="b" data-assets="dry" ${sel.length && !busy ? '' : 'disabled'} title="让后台按尺寸识别类型，不真正上传">演练</button>
+      <button class="b" data-assets="dry" ${sel.length && !busy ? '' : 'disabled'} title="让后台按尺寸识别类型，不真正上传">预览将要上传的内容</button>
       <button class="b primary" data-assets="real" ${sel.length && !busy ? '' : 'disabled'}>上传 ${sel.length} 张到后台草稿</button>`;
   }
   bar.style.display = 'flex';
@@ -733,23 +732,30 @@ async function copyText(text) {
 }
 
 // ================= 总渲染 =================
+function renderHeaderProject() {
+  if (!S.projects.length) return '';
+  return `<select id="projsel" title="${esc(S.current?.dir ?? '')}">
+    ${S.projects.map((p) => `<option value="${esc(p.config)}" ${p.config === project ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>`;
+}
+function navPills(s) {
+  return `${s.textEdits ? `<span class="pill info">文本 ${s.textEdits}</span>` : ''}${s.imagesPending ? `<span class="pill info">图片 ${s.imagesPending}</span>` : ''}${s.errors ? `<span class="pill err">${s.errors} 错误</span>` : ''}`;
+}
 function renderNav() {
   const cp = S.current;
-  let h = `<div class="sec">项目</div><div class="proj"><select id="projsel">
-    ${S.projects.map((p) => `<option value="${esc(p.config)}" ${p.config === project ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-    ${S.projects.length ? '' : '<option>（还没有项目）</option>'}</select>
-    <a class="small" data-page="projects">管理项目 / 添加项目</a></div>`;
+  const link = (p, text, extra = '') => `<a class="link ${page === p ? 'on' : ''}" data-page="${p}"><span>${text}</span>${extra}</a>`;
+  let h = '';
   if (cp?.configured && !cp.error) {
-    h += `<div class="sec">App</div>` + S.apps.map((a) => {
-      const s = a.summary;
-      return `<div class="app ${page === 'app' && a.key === cur ? 'on' : ''}" data-app="${esc(a.key)}"><b>${esc(a.name || a.key)}</b>
-        <small>${esc(a.key)} · ${a.appid}</small>
-        <div class="pills">${s.textEdits ? `<span class="pill info">文本 ${s.textEdits}</span>` : ''}${s.imagesPending ? `<span class="pill info">图片 ${s.imagesPending}</span>` : ''}${s.errors ? `<span class="pill err">${s.errors} 错误</span>` : ''}</div></div>`;
-    }).join('');
-    h += `<div class="sec">项目设置</div>
-      <a class="link ${page === 'settings' ? 'on' : ''}" data-page="settings">设置</a>
-      <a class="link ${page === 'rules' ? 'on' : ''}" data-page="rules">AI 规则</a>`;
+    if (S.apps.length > 1) {
+      // 有多个 App（试玩版、DLC）时才列出来
+      h += `<div class="sec">App</div>` + S.apps.map((a) => `<div class="app ${page === 'app' && a.key === cur ? 'on' : ''}" data-app="${esc(a.key)}"><b>${esc(a.name || a.key)}</b>
+        <small>${esc(a.key)} · ${a.appid}</small><div class="pills">${navPills(a.summary)}</div></div>`).join('');
+      h += `<div class="sec">项目</div>`;
+    } else {
+      h += link('app', '商店内容', S.apps[0] ? `<span class="pills">${navPills(S.apps[0].summary)}</span>` : '');
+    }
+    h += link('settings', '设置') + link('rules', 'AI 规则');
   }
+  h += `<div class="navfoot">${link('projects', '所有项目')}</div>`;
   return h;
 }
 
@@ -757,7 +763,7 @@ function render() {
   // 重新渲染前把表单里还没保存的输入收回来
   if (page === 'settings' && draft && $('#s-browser')) readDraftFromForm();
   if (page === 'rules' && rules && $('#rules')) rules.text = $('#rules').value;
-  $('#cfg').textContent = S.current ? S.current.dir : '';
+  $('#hproj').innerHTML = renderHeaderProject();
   $('#job').textContent = S.job ? `⏳ 正在${ACTION[S.job.action]}${S.job.app ? `（${S.job.app}）` : ''}…` : '';
   document.querySelectorAll('header [data-login]').forEach((b) => b.disabled = !!S.job);
   $('#nav').innerHTML = renderNav();
