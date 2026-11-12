@@ -101,6 +101,41 @@ function common(key: string, scraped?: string): FieldInfo {
   return { tab: '其他', group: '其他字段', label: s || key };
 }
 
+/**
+ * 网页怎么画一个和语言无关的字段（网页不解析字段名，只看这个）：
+ * - langgrid：支持语言表里的一格（语言 × 界面/完全音频/字幕）
+ * - flag：功能、类型、平台、标签、向导类复选框，画成标签
+ * - amount / unit：存储空间、内存这类“数值 + 单位”，互相指向对方的字段名（本地有的话）
+ * - plain：其余，一行一个
+ * 本地化字段一律是 plain。
+ */
+export type FieldShape =
+  | { t: 'langgrid'; lang: string; col: 'supported' | 'full_audio' | 'subtitles' }
+  | { t: 'flag' }
+  | { t: 'amount'; unit?: string }
+  | { t: 'unit'; amount?: string }
+  | { t: 'plain' };
+
+const LANG_GRID = /^app\[content\]\[supported_languages\]\[([a-z_]+)\]\[(supported|full_audio|subtitles)\]$/;
+const FLAG = /^app\[classification\]\[category\]|^rgGenres\[|^app\[platforms\]|^tags\[\]\[=|wizard\]/;
+
+/** has：本地有没有这个字段（用来配对数值和单位） */
+export function fieldShape(key: string, has: (key: string) => boolean): FieldShape {
+  if (splitLocalized(key)) return { t: 'plain' };
+  const g = key.match(LANG_GRID);
+  if (g) return { t: 'langgrid', lang: g[1], col: g[2] as 'supported' | 'full_audio' | 'subtitles' };
+  if (FLAG.test(key)) return { t: 'flag' };
+  if (key.endsWith('[amount]')) {
+    const unit = key.replace(/\[amount\]$/, '[units]');
+    return { t: 'amount', unit: has(unit) ? unit : undefined };
+  }
+  if (key.endsWith('[units]')) {
+    const amount = key.replace(/\[units\]$/, '[amount]');
+    return { t: 'unit', amount: has(amount) ? amount : undefined };
+  }
+  return { t: 'plain' };
+}
+
 export function describeField(key: string, scraped?: string): FieldInfo {
   const loc = splitLocalized(key);
   return loc ? localized(loc.path) : common(key, scraped);

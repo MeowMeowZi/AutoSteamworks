@@ -322,7 +322,7 @@ const TAB_WHERE = { 描述: '商店页管理 → 描述', 基本信息: '商店�
 const shown = (f) => {
   if (f.edited || f.remote) return true;
   // 存储空间、内存的单位跟着数值一起显示，不单独占一行（只有单位、没有数值的不显示）
-  if (/\[units\]$/.test(f.key)) return view === 'all' && !/\[(diskspace|memory)\]\[units\]$/.test(f.key);
+  if (f.shape.t === 'unit') return view === 'all' && !f.shape.amount;
   return view === 'all' || (view === 'filled' && f.local !== '' && f.local !== false);
 };
 const matches = (f) => !filter || [f.info.label, f.info.group, f.key, String(f.local)].some((x) => x.toLowerCase().includes(filter.toLowerCase()));
@@ -358,8 +358,6 @@ function fieldCell(a, f, lang) {
 
 // ---- 和语言无关的字段：复选框类的合成标签 / 语言表，其余一行一个 ----
 const isOn = (v) => v === true || v === 'true' || v === '1';
-const LANG_RE = /^app\[content\]\[supported_languages\]\[([a-z_]+)\]\[(supported|full_audio|subtitles)\]$/;
-const FLAG_RE = /^app\[classification\]\[category\]|^rgGenres\[|^app\[platforms\]|^tags\[\]\[=|wizard\]/;
 const pickBox = (f) => f.edited ? `<input type="checkbox" data-pick="${esc(f.key)}" data-def="${defPick(f) ? 1 : 0}" ${isPicked(f.key, defPick(f)) ? 'checked' : ''} title="勾选后上传">` : '';
 const kindPill = (f) => { const k = f.remote?.kind || (f.edited ? 'local' : null); return k ? `<span class="pill ${KIND[k][1]}">${KIND[k][0]}</span>` : ''; };
 const flagOn = (f) => isOn(f.local) || (f.local === true);
@@ -368,15 +366,16 @@ const flagShown = (f) => matches(f) && (view === 'all' || f.edited || f.remote |
 
 function renderCommon(a, fields) {
   if (!fields.length) return '';
-  const langs = fields.filter((f) => LANG_RE.test(f.key));
-  const flags = fields.filter((f) => !LANG_RE.test(f.key) && FLAG_RE.test(f.key));
+  // 字段怎么画由服务端的 f.shape 决定，这里不解析字段名
+  const langs = fields.filter((f) => f.shape.t === 'langgrid');
+  const flags = fields.filter((f) => f.shape.t === 'flag');
   const plain = fields.filter((f) => !langs.includes(f) && !flags.includes(f));
   let h = '';
 
   // 支持语言：语言 × 界面 / 完全音频 / 字幕
   const byLang = new Map();
   for (const f of langs) {
-    const [, l, col] = f.key.match(LANG_RE);
+    const { lang: l, col } = f.shape;
     if (!byLang.has(l)) byLang.set(l, {});
     byLang.get(l)[col] = f;
   }
@@ -406,16 +405,11 @@ function renderCommon(a, fields) {
 
   // 普通字段：一行一个；数值 + 单位合成一行
   const byKey = new Map(a.common.map((f) => [f.key, f])); // 包括被筛掉的单位字段
-  const unitOf = (f) => f.key.endsWith('[amount]') ? byKey.get(f.key.replace(/\[amount\]$/, '[units]')) : undefined;
+  const unitOf = (f) => f.shape.t === 'amount' && f.shape.unit ? byKey.get(f.shape.unit) : undefined;
   const rows = plain.filter((f) => {
     if (!matches(f)) return false;
     if (f.edited || f.remote) return true;
-    if (f.key.endsWith('[units]')) {
-      // 单位跟着数值显示；只有“全部字段”视图才单独列出
-      const amt = byKey.get(f.key.replace(/\[units\]$/, '[amount]'));
-      return view === 'all' && !amt;
-    }
-    return shown(f);
+    return shown(f); // 单位跟着数值显示；没有数值的单位只在“全部字段”视图单独列出
   });
   if (rows.length) {
     const display = (f, v) => {
@@ -562,8 +556,7 @@ function renderImages(a) {
 // ================= 问题 =================
 function fieldLabel(a, key) {
   const f = allFields(a).find((x) => x.key === key);
-  const m = key.match(/\]\[([a-z]+)\]$/);
-  return f ? `${f.info.label}${m ? `（${langName(m[1])}）` : ''}` : key;
+  return f ? `${f.info.label}${f.lang ? `（${langName(f.lang)}）` : ''}` : key;
 }
 function renderIssues(a) {
   const all = [...a.lint.map((i) => ({ ...i, where: `文本 · ${fieldLabel(a, i.key)}` })), ...a.images.issues.map((i) => ({ ...i, where: '图片' }))];

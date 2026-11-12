@@ -7,9 +7,8 @@ import { openBrowser } from './browser.js';
 import { ensureAiPointer, ensureGitignore } from './projects.js';
 import { describeItem, sortInbox } from './local/inbox.js';
 import { loadStorePage, storeEditUrl } from './partner/store.js';
-import { hasLocal, readLocal, readSnapshot, splitLocalized } from './local/storeFiles.js';
-import { localEdits } from './sync.js';
-import { lint } from './lint.js';
+import { splitLocalized } from './local/storeFiles.js';
+import { readTextState } from './textState.js';
 import { runBuild } from './build/steampipe.js';
 import { SLOTS } from './slots.js';
 import { display, preview } from './ops.js';
@@ -98,11 +97,10 @@ program.command('status [apps...]').description('（离线）列出本地相对�
   .action((keys: string[]) => {
     const c = cfg();
     for (const app of selectApps(c, keys)) {
-      const base = readSnapshot(c, app);
-      if (!hasLocal(app) || !base) { console.log(`${app.key}: 尚未 pull`); continue; }
-      const edits = localEdits(readLocal(app), base);
-      console.log(`${app.key}: ${edits.length ? edits.length + ' 处改动' : '无改动'}`);
-      edits.forEach((k) => console.log('  ↑ ' + display(k)));
+      const t = readTextState(c, app);
+      if (!t.pulled) { console.log(`${app.key}: 尚未 pull`); continue; }
+      console.log(`${app.key}: ${t.edits.length ? t.edits.length + ' 处改动' : '无改动'}`);
+      t.edits.forEach((k) => console.log('  ↑ ' + display(k)));
     }
   });
 
@@ -124,14 +122,13 @@ program.command('check [apps...]').description('（离线）按规则检查本�
     const c = cfg();
     let errors = 0;
     for (const app of selectApps(c, keys)) {
-      if (!hasLocal(app)) { console.log(`${app.key}: 尚未 pull`); continue; }
-      const local = readLocal(app);
-      const issues = lint(app, local);
-      const base = readSnapshot(c, app);
-      const edits = base ? localEdits(local, base) : [];
-      console.log(`${app.key}: ${issues.length ? issues.length + ' 个问题' : '规则检查通过'}，${edits.length} 处未上传的改动`);
+      const t = readTextState(c, app);
+      if (!t.hasLocal) { console.log(`${app.key}: 尚未 pull`); continue; }
+      const issues = t.issues;
+      const edits = t.base ? `${t.edits.length} 处未上传的改动` : '没有快照，算不出未上传的改动（先 pull 一次）';
+      console.log(`${app.key}: ${issues.length ? issues.length + ' 个问题' : '规则检查通过'}，${edits}`);
       for (const i of issues) console.log(`  ${i.level === 'error' ? '✗' : '⚠'} ${display(i.key)}  ${i.msg}`);
-      edits.forEach((k) => console.log('  ↑ ' + display(k)));
+      t.edits.forEach((k) => console.log('  ↑ ' + display(k)));
       errors += issues.filter((i) => i.level === 'error').length;
     }
     process.exitCode = errors ? 1 : 0;

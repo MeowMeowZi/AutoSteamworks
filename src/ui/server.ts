@@ -2,16 +2,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { diffChars, diffLines } from 'diff';
 import { appHome, loadConfig, selectApps, type AppConfig, type Config } from '../config.js';
-import type { FieldValue } from '../partner/form.js';
-import { hasLocal, norm, readLocal, readSnapshot, splitLocalized, STEAM_LANGS, writeLocalField, type Fields } from '../local/storeFiles.js';
-import { lint } from '../lint.js';
+import { STEAM_LANGS, writeLocalField } from '../local/storeFiles.js';
+import { readTextState, textView } from '../textState.js';
 import type { Change } from '../sync.js';
 import type { Log } from '../ops.js';
 import { ACTIONS, runOperation, type Action, type RunRequest, type RunResult } from '../runner.js';
 import { readMeta } from '../partner/meta.js';
-import { describeField, LANG_NAMES } from '../fieldInfo.js';
+import { LANG_NAMES } from '../fieldInfo.js';
 import { imageBoard } from './images.js';
 import { addToInbox, describeItem, placeImage, sortInbox } from '../local/inbox.js';
 import {
@@ -21,27 +19,6 @@ import { createShortcuts, isWindows, pickFolder } from '../desktop.js';
 
 /** 网页发来的请求。delete-images 的位置放在 only 里 */
 interface RunReq { project: string; action: Action; app: string; only?: string[]; dryRun?: boolean; force?: boolean }
-
-const eq = (a?: FieldValue, b?: FieldValue) => (a === undefined || b === undefined ? a === b : norm(a) === norm(b));
-
-/** 文本改动的差异片段，网页上用来高亮 */
-function parts(from: FieldValue | undefined, to: FieldValue | undefined) {
-  if (typeof from !== 'string' || typeof to !== 'string') return undefined;
-  const a = norm(from) as string, b = norm(to) as string;
-  const d = a.length + b.length < 8000 ? diffChars(a, b) : diffLines(a, b);
-  return d.map((p) => ({ v: p.value, t: p.added ? 1 : p.removed ? -1 : 0 }));
-}
-
-function fieldView(key: string, local: Fields, base: Fields | undefined, remote: Map<string, Change> | undefined, labels?: Record<string, string>) {
-  const l = local[key], b = base?.[key];
-  const edited = base ? !eq(l, b) : false;
-  const r = remote?.get(key);
-  return {
-    key, local: l, base: b, edited, info: describeField(key, labels?.[key.replace(/\[=.*\]$/, '')]),
-    parts: edited ? parts(b, l) : undefined,
-    remote: r && { kind: r.kind, value: r.remote, parts: parts(r.remote, l) },
-  };
-}
 
 export interface UiOptions {
   port: number;
@@ -67,42 +44,24 @@ export async function startUi(o: UiOptions) {
   };
 
   function appState(c: Config, project: string, app: AppConfig) {
-    const pulled = hasLocal(app) && !!readSnapshot(c, app);
-    const local = hasLocal(app) ? readLocal(app) : {};
-    const base = readSnapshot(c, app);
+    const text = readTextState(c, app);
     const remote = remoteChecks.get(project + '|' + app.key);
     const meta = readMeta(c, app);
-    const common: ReturnType<typeof fieldView>[] = [];
-    const byPath = new Map<string, Record<string, ReturnType<typeof fieldView>>>();
-    for (const key of Object.keys(local).sort()) {
-      const v = fieldView(key, local, base, remote?.changes, meta?.labels);
-      const loc = splitLocalized(key);
-      if (!loc) { common.push(v); continue; }
-      const row = byPath.get(loc.path) ?? {};
-      row[loc.lang] = v;
-      byPath.set(loc.path, row);
-    }
+    const view = textView(text, remote?.changes, meta?.labels);
     const images = imageBoard(c, app, meta);
-    const issues = lint(app, local);
-    const edits = Object.keys(local).filter((k) => base && !eq(local[k], base[k]));
+    const count = (level: 'error' | 'warn') => text.issues.filter((i) => i.level === level).length + images.issues.filter((i) => i.level === level).length;
     return {
-      key: app.key, appid: app.appid, name: app.name, languages: app.languages, pulled,
+      key: app.key, appid: app.appid, name: app.name, languages: app.languages, pulled: text.pulled,
       storeDir: app.storeDir, assetsDir: app.assets.dir,
-      common,
-      localized: [...byPath].map(([path, langs]) => ({ path, langs })),
+      common: view.common,
+      localized: view.localized,
       images,
       /** 上次从后台读到状态的时间（拉取、对比、上传时都会更新） */
       remoteAt: meta?.at,
-      summary: {
-        textEdits: edits.length,
-        imagesPending: images.pending.length,
-        errors: issues.filter((i) => i.level === 'error').length + images.issues.filter((i) => i.level === 'error').length,
-        warnings: issues.filter((i) => i.level === 'warn').length + images.issues.filter((i) => i.level === 'warn').length,
-      },
-      lint: issues,
+      summary: { textEdits: text.edits.length, imagesPending: images.pending.length, errors: count('error'), warnings: count('warn') },
+      lint: text.issues,
       remoteCheckedAt: remote?.at,
-      /** 线上有、但本地没改的变化（本地改了的已经挂在字段上） */
-      remoteOnly: remote ? [...remote.changes.values()].filter((ch) => ch.kind === 'remote').map((ch) => ch.key) : [],
+      remoteOnly: view.remoteOnly,
     };
   }
 
