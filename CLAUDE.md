@@ -130,3 +130,17 @@ npm test
 3. 构建上传：需要用户提供构建账号（`steamcmd.user`）和游戏导出目录（`contentRoot`），还要确认本机有没有装 steamcmd。
 4. 成就：探查 `apps/achievements/5596340`。
 5. 活动 / 公告，预告片。
+
+## Agent skills
+
+### Issue tracker
+
+Issue 放在 GitHub Issues（MeowMeowZi/AutoSteamworks），用 `gh` CLI 操作。See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+用默认的五个标签：needs-triage、needs-info、ready-for-agent、ready-for-human、wontfix。See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+单上下文：根目录一个 `GLOSSARY.md` + `docs/adr/`（按需创建）。See `docs/agents/domain.md`.
