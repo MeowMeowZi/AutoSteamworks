@@ -1,6 +1,7 @@
 import type { Page } from 'playwright-core';
 import type { AppConfig, Config } from '../config.js';
-import { gotoPartner, sleep } from '../browser.js';
+import { sleep } from '../browser.js';
+import { openEditPage } from './store.js';
 
 /**
  * 图形资源上传。完全复用后台页面自己的逻辑（2026-11 读过 game_admin.js 的 UploadImages）：
@@ -165,7 +166,10 @@ export interface DeleteResult {
   after?: Record<string, any> | null;
 }
 
-/** 逐个删除（dryRun 时只找删除链接）。调用前先 openAssetsPage；每删一张都重新打开页面，保证删除链接是最新的 */
+/**
+ * 逐个删除（dryRun 时只找删除链接）。调用前先 openAssetsPage；每删一张都重新打开页面，保证删除链接是最新的。
+ * 删掉过图时最后再打开一次页面，让后台状态快照是删除后的样子
+ */
 export async function deleteAssets(page: Page, cfg: Config, app: AppConfig, targets: DeleteTarget[], dryRun: boolean) {
   const results: DeleteResult[] = [];
   for (const [i, t] of targets.entries()) {
@@ -173,17 +177,14 @@ export async function deleteAssets(page: Page, cfg: Config, app: AppConfig, targ
     results.push((await page.evaluate(`${DELETE_ONE}(${JSON.stringify({ ...t, dryRun })})`)) as DeleteResult);
     if (!dryRun) await sleep(cfg.delayMs);
   }
+  if (!dryRun && results.some((r) => r.ok)) await openAssetsPage(page, cfg, app);
   return results;
 }
 
-export async function openAssetsPage(page: Page, cfg: Config, app: AppConfig) {
-  const url = cfg.storeEditUrl.replace('{appid}', String(app.appid));
-  await gotoPartner(page, url + (url.includes('?') ? '&' : '?') + 'activetab=tab_graphicalassets');
-  await sleep(cfg.delayMs);
-}
+export const openAssetsPage = (page: Page, cfg: Config, app: AppConfig) => openEditPage(page, cfg, app, 'tab_graphicalassets');
 
-/** 逐个上传（或 dryRun 时只判断类型）。调用前先 openAssetsPage */
-export async function uploadAssets(page: Page, cfg: Config, items: (AssetUpload & { expectChange: boolean })[], opts: { allAges?: boolean; dryRun: boolean }) {
+/** 逐个上传（或 dryRun 时只判断类型）。调用前先 openAssetsPage；传上去过图时最后再打开一次页面，让后台状态快照是上传后的样子 */
+export async function uploadAssets(page: Page, cfg: Config, app: AppConfig, items: (AssetUpload & { expectChange: boolean })[], opts: { allAges?: boolean; dryRun: boolean }) {
   const results: AssetResult[] = [];
   for (const it of items) {
     const ext = it.filename.split('.').pop()!.toLowerCase();
@@ -195,5 +196,6 @@ export async function uploadAssets(page: Page, cfg: Config, items: (AssetUpload 
     results.push({ rel: it.rel, ...r });
     if (!opts.dryRun && r.status) await sleep(cfg.delayMs);
   }
+  if (!opts.dryRun && results.some((r) => r.ok)) await openAssetsPage(page, cfg, app);
   return results;
 }

@@ -4,11 +4,10 @@ import type { Page } from 'playwright-core';
 import { addAppLanguages, type AppConfig, type Config } from './config.js';
 import { hasLoginCookie, isLoginPage, openBrowser, PARTNER_HOME, sleep } from './browser.js';
 import type { FieldValue } from './partner/form.js';
-import { fetchRemote, fetchRemoteAll, pushStore } from './partner/store.js';
+import { fetchRemote, fetchRemoteAll, openEditPage, pushStore } from './partner/store.js';
 import { hasLocal, keepLanguages, readLocal, readSnapshot, splitLocalized, writeLocal, writeSnapshot } from './local/storeFiles.js';
 import { threeWay, type Change } from './sync.js';
 import { deleteAssets, openAssetsPage, uploadAssets } from './partner/assets.js';
-import { saveRemoteMeta } from './partner/meta.js';
 import { remotePath, SLOTS } from './slots.js';
 import { cellName, remoteLang, scanCells, type Cell } from './local/imageCells.js';
 import { LANG_NAMES } from './fieldInfo.js';
@@ -62,20 +61,17 @@ export async function pullApp(page: Page, c: Config, app: AppConfig, o: { force?
     log(`  + 后台勾选了 ${added.map((l) => LANG_NAMES[l] ?? l).join('、')}，已加进同步语言（steam.config.yaml），一起拉取`);
   }
   const fields = keepLanguages(app, all);
-  await saveRemoteMeta(page, c, app);
   writeLocal(app, fields);
   writeSnapshot(c, app, fields);
   log(`  ✓ ${Object.keys(fields).length} 个字段 → ${app.storeDir}`, 'result');
   return true;
 }
 
-/** 三方对比。没 pull 过返回 undefined */
+/** 三方对比。没 pull 过返回 undefined（仍然打开编辑页，刷新后台状态快照） */
 export async function diffApp(page: Page, c: Config, app: AppConfig): Promise<Change[] | undefined> {
   const base = readSnapshot(c, app);
-  if (!hasLocal(app) || !base) return undefined;
-  const remote = await fetchRemote(page, c, app);
-  await saveRemoteMeta(page, c, app);
-  return threeWay(readLocal(app), remote, base);
+  if (!hasLocal(app) || !base) { await openEditPage(page, c, app); return undefined; }
+  return threeWay(readLocal(app), await fetchRemote(page, c, app), base);
 }
 
 export interface PushOpts {
@@ -102,7 +98,6 @@ export async function pushApp(page: Page, c: Config, app: AppConfig, o: PushOpts
   if (o.dryRun) return { failed: false, pushed: false };
 
   const r = await pushStore(page, c, app, pushEntries(plan));
-  await saveRemoteMeta(page, c, app); // pushStore 最后停在重新加载的编辑页上
   writeSnapshot(c, app, snapshotAfterPush(base, r.saved, r.after));
   log(`  ✓ 已保存 ${r.saved.length} 个字段（HTTP ${r.status}）`, 'result');
   if (r.missing.length) log(`  ✗ 页面上找不到: ${r.missing.map(display).join(', ')}`, 'result');
@@ -140,7 +135,7 @@ export async function assetsApp(page: Page, c: Config, app: AppConfig, o: Assets
   }
 
   await openAssetsPage(page, c, app);
-  const results = await uploadAssets(page, c, plan.todo.map((s) => ({ ...s.file, expectChange: s.state !== 'same' })), { allAges: app.assets.screenshotsAllAges, dryRun: !!o.dryRun });
+  const results = await uploadAssets(page, c, app, plan.todo.map((s) => ({ ...s.file, expectChange: s.state !== 'same' })), { allAges: app.assets.screenshotsAllAges, dryRun: !!o.dryRun });
   for (const [i, r] of results.entries()) {
     const s = plan.todo[i];
     const note = s.state === 'changed' ? '（已修改）' : '';
@@ -161,10 +156,7 @@ export async function assetsApp(page: Page, c: Config, app: AppConfig, o: Assets
       log('      ⚠ 截图改动会作为一张新截图上传，旧的那张需要在后台手动删除', 'result');
     }
   }
-  if (!o.dryRun) {
-    writeManifest(c, app, manifestAfterUpload(manifest, plan.todo, results, new Date().toISOString()));
-    if (pushed) { await openAssetsPage(page, c, app); await saveRemoteMeta(page, c, app); }
-  }
+  if (!o.dryRun) writeManifest(c, app, manifestAfterUpload(manifest, plan.todo, results, new Date().toISOString()));
   return { failed, pushed };
 }
 
@@ -200,11 +192,7 @@ export async function deleteImagesApp(page: Page, c: Config, app: AppConfig, o: 
     manifest = cleared.manifest;
     for (const rel of cleared.cleared) log(`      本地文件 ${rel} 没有删除，下次上传会再传上去；不需要的话请把它删掉`, 'result');
   }
-  if (!o.dryRun && pushed) {
-    writeManifest(c, app, manifest);
-    await openAssetsPage(page, c, app);
-    await saveRemoteMeta(page, c, app);
-  }
+  if (!o.dryRun && pushed) writeManifest(c, app, manifest);
   return { failed, pushed };
 }
 

@@ -3,6 +3,7 @@ import { globToRegex, type AppConfig, type Config } from '../config.js';
 import { gotoPartner, sleep } from '../browser.js';
 import { applyFields, postForm, readFields, type FieldInfo, type FieldValue } from './form.js';
 import { keepLanguages, norm, STEAM_LANGS, type Fields } from '../local/storeFiles.js';
+import { captureRemoteMeta } from './meta.js';
 
 /** 页面内部用的字段，同步它们没有意义（或者会出问题） */
 export const BUILTIN_IGNORE = [
@@ -20,9 +21,19 @@ export function filterIgnored(app: AppConfig, fields: FieldInfo[]): FieldInfo[] 
   return fields.filter((f) => !rules.some((r) => r.test(f.key)));
 }
 
-export async function loadStorePage(page: Page, cfg: Config, app: AppConfig): Promise<FieldInfo[]> {
-  await gotoPartner(page, storeEditUrl(cfg, app));
+/**
+ * 打开商店编辑页（tab 是页签，例如 tab_graphicalassets）。所有去编辑页的操作都走这里：
+ * 每次打开都顺便抓一次后台状态快照（RemoteMeta），所以调用方不用管快照。
+ */
+export async function openEditPage(page: Page, cfg: Config, app: AppConfig, tab?: string) {
+  const url = storeEditUrl(cfg, app);
+  await gotoPartner(page, tab ? url + (url.includes('?') ? '&' : '?') + 'activetab=' + tab : url);
   await sleep(cfg.delayMs);
+  await captureRemoteMeta(page, cfg, app);
+}
+
+export async function loadStorePage(page: Page, cfg: Config, app: AppConfig): Promise<FieldInfo[]> {
+  await openEditPage(page, cfg, app);
   return filterIgnored(app, await readFields(page, cfg.formSelector));
 }
 

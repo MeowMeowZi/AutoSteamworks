@@ -1,5 +1,5 @@
 // runner 测试（模拟后台，进程内直接调用 runOperation）：结果字段、未登录、后台是否被改、日志的 result 标记
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -20,6 +20,10 @@ apps:
   nologin: { appid: 999 }
 `);
 
+/** 后台状态快照（打开编辑页时自动保存） */
+const metaFile = join(ws, '.autosw', 'remote', 'game.json');
+const meta = () => JSON.parse(readFileSync(metaFile, 'utf8'));
+
 /** 执行并收集日志；result 行单独记下来 */
 async function op(req: RunRequest) {
   const all: string[] = [], results: string[] = [];
@@ -39,6 +43,8 @@ try {
   assert.equal(r.apps.length, 1);
   assert.equal(r.apps[0].changes, undefined);
   assert.ok(r.results.some((l) => l.startsWith('尚未从后台拉取过')), JSON.stringify(r.results));
+  assert.ok(existsSync(metaFile), '没拉取过的 diff 也刷新后台状态快照');
+  assert.ok(meta().assets && meta().labels, JSON.stringify(meta()));
 
   r = await op({ action: 'pull', apps: ['game'] });
   assert.ok(r.ok && !r.changedRemote, '拉取不改后台');
@@ -72,12 +78,15 @@ try {
   r = await op({ action: 'assets', apps: ['game'] });
   assert.ok(r.ok && r.changedRemote);
   assert.ok(r.results.some((l) => l.startsWith('后台位置：')), JSON.stringify(r.results));
+  assert.ok(meta().assets.small_capsule?.image?.english, '快照是上传后的样子');
 
   r = await op({ action: 'delete-images', apps: ['game'], targets: ['small_capsule|english'], dryRun: true });
   assert.ok(r.ok && !r.changedRemote, '演练删除不改后台');
+  assert.ok(meta().assets.small_capsule?.image?.english, '演练删除后快照里图还在');
   r = await op({ action: 'delete-images', apps: ['game'], targets: ['small_capsule|english'] });
   assert.ok(r.ok && r.changedRemote, '删除图片也算改了后台');
   assert.ok(r.results.some((l) => l.startsWith('✓ 已删除 小宣传图')));
+  assert.ok(!meta().assets.small_capsule?.image?.english, '快照是删除后的样子');
 
   // 没登录：needLogin，后面的 App 不再执行
   r = await op({ action: 'pull', apps: ['nologin', 'game'] });

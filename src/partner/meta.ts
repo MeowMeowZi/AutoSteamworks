@@ -1,4 +1,4 @@
-// 后台状态快照：拉取 / 对比 / 上传时顺便从商店编辑页读出来，存到 <stateDir>/remote/<app>.json，网页用它显示“后台现在是什么样”。
+// 后台状态快照：每次打开商店编辑页（store.ts 的 openEditPage）时顺便读出来，存到 <stateDir>/remote/<app>.json，网页用它显示“后台现在是什么样”。
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from 'playwright-core';
@@ -31,7 +31,7 @@ const READ_META = String.raw`((appid) => {
 })`;
 
 /** 页面必须已经在商店编辑页上 */
-export async function readRemoteMeta(page: Page, app: AppConfig): Promise<RemoteMeta> {
+async function readRemoteMeta(page: Page, app: AppConfig): Promise<RemoteMeta> {
   const r = (await page.evaluate(`${READ_META}(${JSON.stringify(String(app.appid))})`)) as Omit<RemoteMeta, 'at'>;
   return { at: new Date().toISOString(), ...r };
 }
@@ -43,14 +43,14 @@ export function readMeta(cfg: Config, app: AppConfig): RemoteMeta | undefined {
   return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : undefined;
 }
 
-export function writeMeta(cfg: Config, app: AppConfig, m: RemoteMeta) {
+function writeMeta(cfg: Config, app: AppConfig, m: RemoteMeta) {
   const p = metaPath(cfg, app);
   mkdirSync(join(p, '..'), { recursive: true });
   writeFileSync(p, JSON.stringify(m, null, 2));
 }
 
-/** 读一次并保存；失败不影响主流程 */
-export async function saveRemoteMeta(page: Page, cfg: Config, app: AppConfig) {
+/** 读一次并保存；失败不影响主流程。只给 openEditPage 用 */
+export async function captureRemoteMeta(page: Page, cfg: Config, app: AppConfig) {
   try {
     writeMeta(cfg, app, await readRemoteMeta(page, app));
   } catch {
