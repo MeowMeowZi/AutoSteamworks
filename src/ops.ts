@@ -14,7 +14,12 @@ import { imageSize } from './local/imageSize.js';
 import { LANG_NAMES } from './fieldInfo.js';
 import { assetStates, readManifest, scanAssets, writeManifest } from './local/assetFiles.js';
 
-export type Log = (line: string) => void;
+/**
+ * result：结果行（成功、失败、警告、后台位置、提醒），网页的结果框只显示这些；
+ * detail：过程信息，只在日志里显示。不写就是 detail
+ */
+export type LogKind = 'result' | 'detail';
+export type Log = (line: string, kind?: LogKind) => void;
 
 export const preview = (v: FieldValue | undefined) => {
   if (v === undefined) return '∅';
@@ -28,9 +33,9 @@ export const display = (key: string) => {
   return loc ? `${loc.lang}/${loc.path}` : key;
 };
 
-export function printChange(log: Log, c: Change, verbose: boolean) {
+export function printChange(log: Log, c: Change, verbose: boolean, kind: LogKind = 'detail') {
   const tag = { local: '↑ 本地改动', remote: '↓ 线上改动', conflict: '⚠ 冲突', gone: '✗ 线上无此字段' }[c.kind];
-  log(`  ${tag}  ${display(c.key)}`);
+  log(`  ${tag}  ${display(c.key)}`, kind);
   if (!verbose) return;
   if (typeof c.local === 'string' && typeof c.remote === 'string') {
     const patch = createTwoFilesPatch('remote', 'local', c.remote.replace(/\r\n/g, '\n') + '\n', c.local + '\n', '', '', { context: 2 });
@@ -46,7 +51,7 @@ export async function pullApp(page: Page, c: Config, app: AppConfig, o: { force?
   if (hasLocal(app) && base && !o.force) {
     const edits = localEdits(readLocal(app), base);
     if (edits.length) {
-      log(`  跳过：本地有 ${edits.length} 个未推送的改动（${edits.slice(0, 3).map(display).join(', ')}…），先 push 或加 --force`);
+      log(`  跳过：本地有 ${edits.length} 个未推送的改动（${edits.slice(0, 3).map(display).join(', ')}…），先 push 或加 --force`, 'result');
       return false;
     }
   }
@@ -62,7 +67,7 @@ export async function pullApp(page: Page, c: Config, app: AppConfig, o: { force?
   await saveRemoteMeta(page, c, app);
   writeLocal(app, fields);
   writeSnapshot(c, app, fields);
-  log(`  ✓ ${Object.keys(fields).length} 个字段 → ${app.storeDir}`);
+  log(`  ✓ ${Object.keys(fields).length} 个字段 → ${app.storeDir}`, 'result');
   return true;
 }
 
@@ -86,15 +91,15 @@ export interface PushOpts {
 export async function pushApp(page: Page, c: Config, app: AppConfig, o: PushOpts, log: Log) {
   const base = readSnapshot(c, app);
   if (!hasLocal(app) || !base) {
-    log('  尚未 pull，跳过（必须先 pull 才能安全地推送）');
+    log('  尚未 pull，跳过（必须先 pull 才能安全地推送）', 'result');
     return { failed: false, pushed: false };
   }
   let changes = threeWay(readLocal(app), await fetchRemote(page, c, app), base);
   if (o.only) changes = changes.filter((ch) => o.only!.includes(ch.key));
-  changes.filter((ch) => ch.kind !== 'local').forEach((ch) => printChange(log, ch, false));
+  changes.filter((ch) => ch.kind !== 'local').forEach((ch) => printChange(log, ch, false, ch.kind === 'remote' ? 'detail' : 'result'));
   const toPush = changes.filter((ch) => ch.kind === 'local' || (o.force && ch.kind === 'conflict'));
   if (!toPush.length) {
-    log('  没有需要推送的改动');
+    log('  没有需要推送的改动', 'result');
     return { failed: false, pushed: false };
   }
   toPush.forEach((ch) => printChange(log, ch, !!o.dryRun));
@@ -106,9 +111,9 @@ export async function pushApp(page: Page, c: Config, app: AppConfig, o: PushOpts
   const snap = { ...base };
   for (const k of r.saved) snap[k] = r.after[k];
   writeSnapshot(c, app, snap);
-  log(`  ✓ 已保存 ${r.saved.length} 个字段（HTTP ${r.status}）`);
-  if (r.missing.length) log(`  ✗ 页面上找不到: ${r.missing.map(display).join(', ')}`);
-  if (r.notPersisted.length) log(`  ✗ 提交了但重新加载后值不对: ${r.notPersisted.map(display).join(', ')}`);
+  log(`  ✓ 已保存 ${r.saved.length} 个字段（HTTP ${r.status}）`, 'result');
+  if (r.missing.length) log(`  ✗ 页面上找不到: ${r.missing.map(display).join(', ')}`, 'result');
+  if (r.notPersisted.length) log(`  ✗ 提交了但重新加载后值不对: ${r.notPersisted.map(display).join(', ')}`, 'result');
   return { failed: r.missing.length > 0 || r.notPersisted.length > 0, pushed: r.saved.length > 0 };
 }
 
@@ -123,7 +128,7 @@ export interface AssetsOpts {
 export async function assetsApp(page: Page, c: Config, app: AppConfig, o: AssetsOpts, log: Log) {
   let failed = false, pushed = false;
   const { assets, warnings } = scanAssets(app);
-  warnings.forEach((w) => log(`  ⚠ ${w}`));
+  warnings.forEach((w) => log(`  ⚠ ${w}`, 'result'));
   if (!assets.length) {
     log(`  ${app.assets.dir} 下没有图片`);
     return { failed, pushed };
@@ -136,7 +141,7 @@ export async function assetsApp(page: Page, c: Config, app: AppConfig, o: Assets
 
   const hasShots = todo.some((s) => s.asset.tab === 'screenshot');
   if (hasShots && app.assets.screenshotsAllAges === undefined) {
-    log('  ✗ 有截图要上传，但配置里没设置 assets.screenshotsAllAges（Steam 要求声明截图是否适合所有年龄）');
+    log('  ✗ 有截图要上传，但配置里没设置 assets.screenshotsAllAges（Steam 要求声明截图是否适合所有年龄）', 'result');
     return { failed: true, pushed };
   }
   if (!o.dryRun && todo.some((s) => s.asset.tab !== 'screenshot')) {
@@ -150,20 +155,20 @@ export async function assetsApp(page: Page, c: Config, app: AppConfig, o: Assets
     const note = s.state === 'changed' ? '（已修改）' : '';
     if (!r.ok) {
       failed = true;
-      log(`  ✗ ${r.rel}${note}  ${r.error}${r.status ? ` (HTTP ${r.status})` : ''}`);
+      log(`  ✗ ${r.rel}${note}  ${r.error}${r.status ? ` (HTTP ${r.status})` : ''}`, 'result');
       if (r.body) log(`      ${r.body.slice(0, 300).replace(/\s+/g, ' ')}`);
       continue;
     }
     const where = s.asset.lang && r.key?.endsWith('|' + s.asset.lang) ? ` [${s.asset.lang}]` : '';
     const slot = SLOTS.find((x) => x.label === r.type);
-    log(`  ${o.dryRun ? '→' : '✓'} ${r.rel}${note}  ${r.type} ${r.size}${where}${r.verified ? '（已核对）' : ''}`);
-    if (r.warning) log(`      ⚠ ${r.warning}`);
-    if (slot && !o.dryRun) log(`      后台位置：${slot.where}${slot.localized && s.asset.lang ? ' → ' + s.asset.lang : ''}（后台会把文件改名，不显示原文件名）`);
+    log(`  ${o.dryRun ? '→' : '✓'} ${r.rel}${note}  ${r.type} ${r.size}${where}${r.verified ? '（已核对）' : ''}`, 'result');
+    if (r.warning) log(`      ⚠ ${r.warning}`, 'result');
+    if (slot && !o.dryRun) log(`      后台位置：${slot.where}${slot.localized && s.asset.lang ? ' → ' + s.asset.lang : ''}（后台会把文件改名，不显示原文件名）`, 'result');
     if (o.dryRun) continue;
     pushed = true;
     manifest[r.rel] = { hash: s.asset.hash, type: r.type, uploadedAt: new Date().toISOString() };
     if (s.state === 'changed' && s.asset.tab === 'screenshot') {
-      log('      ⚠ 截图改动会作为一张新截图上传，旧的那张需要在后台手动删除');
+      log('      ⚠ 截图改动会作为一张新截图上传，旧的那张需要在后台手动删除', 'result');
     }
   }
   if (!o.dryRun) {
@@ -184,8 +189,8 @@ export async function deleteImagesApp(page: Page, c: Config, app: AppConfig, o: 
     return { t, slot: SLOTS.find((s) => s.id === id), lang };
   });
   for (const x of todo) {
-    if (!x.slot || x.slot.id === 'screenshot') { log(`  ✗ ${x.t}  不认识的位置（截图暂不支持删除）`); failed = true; }
-    else if (x.slot.localized && !app.languages.includes(x.lang)) { log(`  ✗ ${x.t}  ${x.lang} 不在这个 App 的同步语言里`); failed = true; }
+    if (!x.slot || x.slot.id === 'screenshot') { log(`  ✗ ${x.t}  不认识的位置（截图暂不支持删除）`, 'result'); failed = true; }
+    else if (x.slot.localized && !app.languages.includes(x.lang)) { log(`  ✗ ${x.t}  ${x.lang} 不在这个 App 的同步语言里`, 'result'); failed = true; }
   }
   if (failed) return { failed, pushed };
 
@@ -196,25 +201,25 @@ export async function deleteImagesApp(page: Page, c: Config, app: AppConfig, o: 
   const { assets } = scanAssets(app);
   for (const [i, r] of results.entries()) {
     const x = todo[i], slot = x.slot!;
-    if (!r.ok) { failed = true; log(`  ✗ 删除 ${name(x)}  ${r.error}${r.status ? ` (HTTP ${r.status})` : ''}`); continue; }
-    if (o.dryRun) { log(`  → 删除 ${name(x)}  会清空：${Object.keys(r.fields ?? {}).join('、')}`); continue; }
+    if (!r.ok) { failed = true; log(`  ✗ 删除 ${name(x)}  ${r.error}${r.status ? ` (HTTP ${r.status})` : ''}`, 'result'); continue; }
+    if (o.dryRun) { log(`  → 删除 ${name(x)}  会清空：${Object.keys(r.fields ?? {}).join('、')}`, 'result'); continue; }
     pushed = true;
     const lang = slot.localized ? x.lang : 'english';
     if (r.after && remotePath(r.after, slot, lang)) {
       failed = true;
-      log(`  ✗ 删除 ${name(x)}  后台返回成功，但重新读取后图片还在`);
+      log(`  ✗ 删除 ${name(x)}  后台返回成功，但重新读取后图片还在`, 'result');
       continue;
     }
     const verified = r.before && r.after && remotePath(r.before, slot, lang) ? '（已核对）' : '';
-    log(`  ✓ 已删除 ${name(x)}${verified}`);
-    log(`      后台位置：${slot.where}${slot.localized ? ' → ' + x.lang : ''}`);
+    log(`  ✓ 已删除 ${name(x)}${verified}`, 'result');
+    log(`      后台位置：${slot.where}${slot.localized ? ' → ' + x.lang : ''}`, 'result');
     // 同一位置的本地图片：清掉上传记录，网页上会变成“待上传”
     for (const a of assets) {
       const dim = imageSize(a.bytes);
       const s = dim && classify(a.tab, dim.width, dim.height);
       if (s?.id === slot.id && (!slot.localized || a.lang === x.lang) && manifest[a.rel]) {
         delete manifest[a.rel];
-        log(`      本地文件 ${a.rel} 没有删除，下次上传会再传上去；不需要的话请把它删掉`);
+        log(`      本地文件 ${a.rel} 没有删除，下次上传会再传上去；不需要的话请把它删掉`, 'result');
       }
     }
   }
@@ -239,7 +244,7 @@ export async function loginFlow(c: Pick<Config, 'profileDir' | 'browserChannel'>
       ok = (await hasLoginCookie(ctx)) && !isLoginPage(page.url());
     }
     if (ok) await sleep(3000); // 让 Steam 完成重定向、写完剩下的 Cookie
-    log(ok ? `✓ 登录成功，所有项目共用这个登录（保存在 ${c.profileDir}）` : '✗ 没有检测到登录（浏览器被关掉了或超时），请重试');
+    log(ok ? `✓ 登录成功，所有项目共用这个登录（保存在 ${c.profileDir}）` : '✗ 没有检测到登录（浏览器被关掉了或超时），请重试', 'result');
     return ok;
   } finally {
     await ctx.close().catch(() => {});

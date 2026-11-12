@@ -4,12 +4,12 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import { diffChars, diffLines } from 'diff';
 import { appHome, loadConfig, selectApps, type AppConfig, type Config } from '../config.js';
-import { openBrowser } from '../browser.js';
 import type { FieldValue } from '../partner/form.js';
 import { hasLocal, norm, readLocal, readSnapshot, splitLocalized, STEAM_LANGS, writeLocalField, type Fields } from '../local/storeFiles.js';
 import { lint } from '../lint.js';
 import type { Change } from '../sync.js';
-import { assetsApp, deleteImagesApp, diffApp, DRAFT_NOTE, loginFlow, pullApp, pushApp, type Log } from '../ops.js';
+import type { Log } from '../ops.js';
+import { ACTIONS, runOperation, type Action, type RunRequest, type RunResult } from '../runner.js';
 import { readMeta } from '../partner/meta.js';
 import { describeField, LANG_NAMES } from '../fieldInfo.js';
 import { imageBoard } from './images.js';
@@ -19,7 +19,7 @@ import {
 } from '../projects.js';
 import { createShortcuts, isWindows, pickFolder } from '../desktop.js';
 
-type Action = 'pull' | 'diff' | 'push' | 'assets' | 'delete-images' | 'login';
+/** 网页发来的请求。delete-images 的位置放在 only 里 */
 interface RunReq { project: string; action: Action; app: string; only?: string[]; dryRun?: boolean; force?: boolean }
 
 const eq = (a?: FieldValue, b?: FieldValue) => (a === undefined || b === undefined ? a === b : norm(a) === norm(b));
@@ -57,7 +57,7 @@ export async function startUi(o: UiOptions) {
   const clients = new Set<ServerResponse>();
   let job: { action: Action; project: string; app: string; log: string[] } | undefined;
   /** 上一个任务的结果，网页顶部显示成结果框 */
-  let lastResult: { project: string; app: string; action: Action; dryRun: boolean; ok: boolean; needLogin: boolean; at: string; lines: string[] } | undefined;
+  let lastResult: { project: string; app: string; action: Action; dryRun: boolean; ok: boolean; changedRemote: boolean; needLogin: boolean; at: string; lines: string[] } | undefined;
 
   const openProject = o.open ? addProject(o.open).config : undefined;
 
@@ -128,62 +128,40 @@ export async function startUi(o: UiOptions) {
   }
 
   async function run(req: RunReq) {
-    const project = req.action === 'login' && !req.project ? '' : requireProject(req.project);
     // 登录不需要项目配置好：没配置时用默认的共用登录目录
-    const c: Config = project && existsSync(project) ? loadConfig(project) : { profileDir: join(appHome(), 'profile'), browserChannel: 'msedge' } as Config;
-    const app = req.action === 'login' ? undefined : selectApps(c, [req.app])[0];
-    job = { action: req.action, project, app: app?.key ?? '', log: [] };
-    const log: Log = (line) => { job!.log.push(line); send('log', line); };
-    send('job', { action: req.action, project, app: app?.key });
-    let ok = true;
+    const project = req.action === 'login' && !req.project ? '' : requireProject(req.project);
+    const configPath = project && existsSync(project) ? project : undefined;
+    const app = req.action === 'login' ? '' : req.app;
+    job = { action: req.action, project, app, log: [] };
+    const lines: string[] = [];
+    const log: Log = (line, kind) => {
+      job!.log.push(line);
+      if (kind === 'result') lines.push(line.trim());
+      send('log', line);
+    };
+    send('job', { action: req.action, project, app });
+    const common = { configPath, apps: app ? [app] : [] };
+    const op: RunRequest = req.action === 'delete-images' ? { ...common, action: req.action, targets: req.only ?? [], dryRun: req.dryRun }
+      : req.action === 'push' || req.action === 'assets' ? { ...common, action: req.action, dryRun: req.dryRun, force: req.force, only: req.only }
+        : req.action === 'pull' ? { ...common, action: req.action, force: req.force }
+          : { ...common, action: req.action };
+    let r: RunResult = { ok: false, changedRemote: false, needLogin: false, apps: [] };
     try {
-      if (req.action === 'login') {
-        ok = await loginFlow(c, log);
-      } else {
-        const { ctx, page } = await openBrowser(c, true);
-        try {
-          log(`■ ${app!.key} (${app!.appid}) ${({ pull: '拉取', diff: '刷新后台状态', push: '上传文本', assets: '上传图片', 'delete-images': '删除后台图片' })[req.action]}${req.dryRun ? '（演练）' : ''}`);
-          const rk = project + '|' + app!.key;
-          if (req.action === 'pull') {
-            ok = await pullApp(page, c, app!, { force: req.force }, log);
-            if (ok) remoteChecks.delete(rk);
-          } else if (req.action === 'diff') {
-            const changes = await diffApp(page, c, app!);
-            if (!changes) { log('  尚未从后台拉取过，已读取后台的图片状态。拉取后才能对比文本。'); }
-            else {
-              remoteChecks.set(rk, { at: new Date().toISOString(), changes: new Map(changes.map((ch) => [ch.key, ch])) });
-              const n = (k: string) => changes.filter((ch) => ch.kind === k).length;
-              log(changes.length ? `  本地改动 ${n('local')}，后台被改过 ${n('remote')}，冲突 ${n('conflict')}，后台已删除 ${n('gone')}` : '  ✓ 文本和后台一致');
-            }
-          } else {
-            const r = req.action === 'push'
-              ? await pushApp(page, c, app!, { dryRun: req.dryRun, force: req.force, only: req.only }, log)
-              : req.action === 'delete-images'
-                ? await deleteImagesApp(page, c, app!, { targets: req.only ?? [], dryRun: req.dryRun }, log)
-                : await assetsApp(page, c, app!, { dryRun: req.dryRun, force: req.force, only: req.only }, log);
-            ok = !r.failed;
-            if (r.pushed) {
-              log(DRAFT_NOTE);
-              remoteChecks.delete(rk); // 线上变了，旧的对比结果作废
-            }
-          }
-        } finally {
-          await ctx.close().catch(() => {});
-        }
-      }
+      r = await runOperation(op, log);
+      const rk = project + '|' + app;
+      const diffed = r.apps[0]?.changes;
+      if (req.action === 'diff' && diffed) remoteChecks.set(rk, { at: new Date().toISOString(), changes: new Map(diffed.map((ch) => [ch.key, ch])) });
+      // 拉取后本地和线上一致了；后台变了的话旧的对比结果也作废
+      if ((req.action === 'pull' && r.ok) || r.changedRemote) remoteChecks.delete(rk);
     } catch (e) {
-      ok = false;
-      log(`错误: ${e instanceof Error ? e.message : e}`);
+      log(`✗ 错误: ${e instanceof Error ? e.message : e}`, 'result');
     } finally {
-      const lines = job!.log.map((l) => l.trim());
       lastResult = {
-        project, app: app?.key ?? '', action: req.action, dryRun: !!req.dryRun, ok, at: new Date().toISOString(),
-        needLogin: lines.some((l) => /未登录或已过期/.test(l)),
-        // 只保留结果行：成功、失败、警告、后台位置、提醒
-        lines: lines.filter((l) => /^(✓|✗|⚠|→|后台位置|本地文件|提醒|错误|跳过|没有需要|本地改动|尚未)/.test(l)),
+        project, app, action: req.action, dryRun: !!req.dryRun, ok: r.ok, at: new Date().toISOString(),
+        changedRemote: r.changedRemote, needLogin: r.needLogin, lines,
       };
       job = undefined;
-      send('done', { ok });
+      send('done', { ok: r.ok });
       send('changed', null);
     }
   }
@@ -356,7 +334,7 @@ export async function startUi(o: UiOptions) {
         }
         case '/api/run': {
           const r = b as RunReq;
-          if (!['pull', 'diff', 'push', 'assets', 'delete-images', 'login'].includes(r.action)) return json(res, 400, { error: '未知操作' });
+          if (!ACTIONS.includes(r.action)) return json(res, 400, { error: '未知操作' });
           if (job) return json(res, 409, { error: `正在执行 ${job.action}，请等它结束` });
           if (r.action !== 'login') appOf(r.project, r.app); // 先校验项目和 App
           else if (r.project) requireProject(r.project);

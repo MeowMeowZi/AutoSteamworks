@@ -12,7 +12,8 @@ import { localEdits } from './sync.js';
 import { lint } from './lint.js';
 import { runBuild } from './build/steampipe.js';
 import { SLOTS } from './slots.js';
-import { assetsApp, deleteImagesApp, diffApp, loginFlow, pullApp, display, DRAFT_NOTE, preview, printChange, pushApp } from './ops.js';
+import { display, preview } from './ops.js';
+import { runOperation, type RunRequest } from './runner.js';
 
 const program = new Command('autosw')
   .description('把本地文件同步到 Steamworks 后台')
@@ -20,9 +21,13 @@ const program = new Command('autosw')
 
 const cfg = (): Config => loadConfig(program.opts().config);
 
-const log = (line: string) => console.log(line);
+/** 交给 runner 执行，输出全部打到终端；有失败时退出码为 1 */
+async function run(req: RunRequest) {
+  const r = await runOperation({ configPath: program.opts().config, ...req }, (line) => console.log(line.startsWith('■') ? '\n' + line : line));
+  process.exitCode = r.ok ? 0 : 1;
+}
 
-/** 打开浏览器，依次处理每个 App */
+/** inspect 用：打开浏览器，依次处理每个 App */
 async function eachApp(keys: string[], headed: boolean, fn: (page: Page, app: AppConfig, c: Config) => Promise<void>) {
   const c = cfg();
   const apps = selectApps(c, keys);
@@ -59,7 +64,7 @@ program.command('apps').description('列出配置中的 App').action(() => {
 });
 
 program.command('login').description('打开浏览器手动登录 Steamworks，保存会话').action(async () => {
-  process.exitCode = (await loginFlow(cfg(), log)) ? 0 : 1;
+  await run({ action: 'login' });
 });
 
 program.command('inspect <app>')
@@ -86,9 +91,7 @@ program.command('pull [apps...]').description('把后台的商店内容拉到本
   .option('-f, --force', '即使本地有未推送的改动也覆盖')
   .option('--headed', '显示浏览器窗口')
   .action(async (keys: string[], o) => {
-    await eachApp(keys, !!o.headed, async (page, app, c) => {
-      await pullApp(page, c, app, { force: !!o.force }, log);
-    });
+    await run({ action: 'pull', apps: keys, headed: !!o.headed, force: !!o.force });
   });
 
 program.command('status [apps...]').description('（离线）列出本地相对上次同步的改动')
@@ -137,12 +140,7 @@ program.command('check [apps...]').description('（离线）按规则检查本�
 program.command('diff [apps...]').description('对比 本地 / 线上 / 上次同步 三方')
   .option('--headed', '显示浏览器窗口')
   .action(async (keys: string[], o) => {
-    await eachApp(keys, !!o.headed, async (page, app, c) => {
-      const changes = await diffApp(page, c, app);
-      if (!changes) return console.log('  尚未 pull');
-      if (!changes.length) console.log('  ✓ 已同步');
-      changes.forEach((ch) => printChange(log, ch, true));
-    });
+    await run({ action: 'diff', apps: keys, headed: !!o.headed });
   });
 
 program.command('push [apps...]').description('把本地改动保存到后台（不发布）')
@@ -150,14 +148,7 @@ program.command('push [apps...]').description('把本地改动保存到后台（
   .option('-f, --force', '冲突时以本地为准')
   .option('--headed', '显示浏览器窗口')
   .action(async (keys: string[], o) => {
-    let failed = false, pushed = false;
-    await eachApp(keys, !!o.headed, async (page, app, c) => {
-      const r = await pushApp(page, c, app, { dryRun: !!o.dryRun, force: !!o.force }, log);
-      failed ||= r.failed;
-      pushed ||= r.pushed;
-    });
-    if (pushed) console.log('\n' + DRAFT_NOTE);
-    process.exitCode = failed ? 1 : 0;
+    await run({ action: 'push', apps: keys, headed: !!o.headed, dryRun: !!o.dryRun, force: !!o.force });
   });
 
 program.command('assets [apps...]').description('上传新增或改过的图片（宣传图、库资源、截图）')
@@ -165,14 +156,7 @@ program.command('assets [apps...]').description('上传新增或改过的图片�
   .option('-f, --force', '忽略上传记录，全部重新上传')
   .option('--headed', '显示浏览器窗口')
   .action(async (keys: string[], o) => {
-    let failed = false, uploaded = false;
-    await eachApp(keys, !!o.headed, async (page, app, c) => {
-      const r = await assetsApp(page, c, app, { dryRun: !!o.dryRun, force: !!o.force }, log);
-      failed ||= r.failed;
-      uploaded ||= r.pushed;
-    });
-    if (uploaded) console.log('\n' + DRAFT_NOTE);
-    process.exitCode = failed ? 1 : 0;
+    await run({ action: 'assets', apps: keys, headed: !!o.headed, dryRun: !!o.dryRun, force: !!o.force });
   });
 
 program.command('delete-image <app> <targets...>')
@@ -180,14 +164,7 @@ program.command('delete-image <app> <targets...>')
   .option('-n, --dry-run', '只在后台页面上找到删除链接，不删除')
   .option('--headed', '显示浏览器窗口')
   .action(async (key: string, targets: string[], o) => {
-    let failed = false, deleted = false;
-    await eachApp([key], !!o.headed, async (page, app, c) => {
-      const r = await deleteImagesApp(page, c, app, { targets, dryRun: !!o.dryRun }, log);
-      failed ||= r.failed;
-      deleted ||= r.pushed;
-    });
-    if (deleted) console.log('\n' + DRAFT_NOTE);
-    process.exitCode = failed ? 1 : 0;
+    await run({ action: 'delete-images', apps: [key], headed: !!o.headed, targets, dryRun: !!o.dryRun });
   });
 
 program.command('build <app>').description('通过 steamcmd / SteamPipe 上传构建')

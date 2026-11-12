@@ -109,7 +109,10 @@ function page(id: string) {
 export function start(port = 0) {
   const srv = createServer(async (req, res) => {
     const url = new URL(req.url!, 'http://x');
+    // 没登录时真实后台会跳回首页并带上 ?goto=。appid 999 模拟这种情况
+    if (url.pathname === '/') return res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end('<html><body>home</body></html>');
     let m = url.pathname.match(/^\/admin\/game\/editbyappid\/(\d+)$/);
+    if (m?.[1] === '999') return res.writeHead(302, { Location: `/?goto=${encodeURIComponent(url.pathname)}` }).end();
     if (m) return res.writeHead(302, { Location: `/admin/game/edit/${Number(m[1]) + 1000}?activetab=tab_description` }).end();
     m = url.pathname.match(/^\/admin\/game\/edit\/(\d+)$/);
     if (m) return res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(page(m[1]));

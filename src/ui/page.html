@@ -309,7 +309,7 @@ function renderResult(a) {
   return `<div class="result ${cls}"><div class="row"><h3>${!r.ok ? '✗' : '✓'} ${esc(title)}</h3><span class="sp"></span>
     <span class="small muted">${new Date(r.at).toLocaleTimeString()}</span> <a data-dismiss="${esc(r.at)}">关闭</a></div>
     ${r.lines.length ? `<ul>${r.lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}
-    ${r.ok && !r.dryRun && (r.action === 'push' || r.action === 'assets') ? '<div class="small" style="margin-top:6px">已保存为后台草稿。在 Steamworks 后台的“发布”页签发布后，商店上才会看到。</div>' : ''}
+    ${r.changedRemote ? '<div class="small" style="margin-top:6px">已保存为后台草稿。在 Steamworks 后台的“发布”页签发布后，商店上才会看到。</div>' : ''}
     ${r.needLogin ? '<div style="margin-top:8px"><button class="b primary" data-login>登录 Steam</button> <span class="small">Steam 登录过期了，登录后再试一次</span></div>' : ''}
     ${r.ok && r.action === 'login' ? '<div class="small" style="margin-top:6px">下一步：在左边选一个 App，点“从后台拉取”。</div>' : ''}
     ${!r.ok ? '<div class="small" style="margin-top:6px"><a data-openlog>打开完整日志</a></div>' : ''}

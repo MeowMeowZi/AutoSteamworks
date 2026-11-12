@@ -80,7 +80,9 @@ try {
   const c = await cli('push', 'game'); console.log(c);
   assert.match(c, /冲突\s+english\/short_description/);
   assert.equal(remote()['app[content][short_description][english]'], 'Web edit', '冲突字段默认不推送');
-  assert.match(await cli('pull', 'game'), /跳过：本地有/, '有未推送改动时 pull 拒绝覆盖');
+  const skipped = await cli('pull', 'game').then(() => 'EXIT 0', (e) => `EXIT ${e.code}\n${e.stdout}`);
+  assert.match(skipped, /^EXIT 1/, '跳过拉取算失败');
+  assert.match(skipped, /跳过：本地有/, '有未推送改动时 pull 拒绝覆盖');
 
   await cli('push', 'game', '--force');
   assert.equal(remote()['app[content][short_description][english]'], 'Local edit');

@@ -38,13 +38,18 @@ export async function settle(page: Page) {
   await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
 }
 
+/** 没登录（或登录过期）。runner 靠它判断要不要在网页上提示登录 */
+export class NotLoggedInError extends Error {
+  override name = 'NotLoggedInError';
+}
+
 export async function gotoPartner(page: Page, url: string) {
   await page.goto(url, { waitUntil: 'load' });
   await settle(page);
   const now = page.url();
   if (isLoginPage(now) || isGotoRedirect(now)) {
     if (!(await hasLoginCookie(page.context()))) {
-      throw new Error('Steamworks 还没登录或登录已过期：请在网页上点“登录”（命令行是 `autosw login`），登录后再试');
+      throw new NotLoggedInError('Steamworks 还没登录或登录已过期：请在网页上点“登录”（命令行是 `autosw login`），登录后再试');
     }
     throw new Error(`已登录，但后台把请求跳回了首页（${now}）：当前账号可能没有这个 App 的权限，`
       + '或者 App 属于另一个机构——请在 Steamworks 里切换到对应的机构后再试');
