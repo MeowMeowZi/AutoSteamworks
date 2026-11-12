@@ -80,7 +80,9 @@ src/ops.ts                 每个 App 的 pull / diff / push / assets / delete-i
 src/plan.ts                同步计划（纯函数，不碰浏览器和文件）：拉取能不能覆盖、新语言、要推送哪些字段、推送后的快照、要上传哪些图（和网页一样用 scanCells，尺寸不对的在本地就拒绝）、上传 / 删除后的上传记录
 src/lint.ts                规则检查（简短描述长度、BBCode 闭合、未翻译）
 src/textState.ts           App 文本状态：readTextState（本地字段、快照、改动、规则检查、“拉取过”= 本地文件和快照都有）和 textView（网页的字段视图：差异片段、线上对比、lang、shape）。status / check / 网页只调它
-src/ui/server.ts           `ui` 命令的 HTTP 服务：/api/state、/api/run（同一时间只跑一个任务）、/api/field、SSE /api/events（轮询文件 mtime）
+src/ui/server.ts           `ui` 命令的 HTTP 服务：路由、/api/state（拼网页要的状态）、校验 project 参数。任务和变化通知不在这里
+src/ui/jobs.ts             网页的任务：同一时间只跑一个（start 有任务时返回 error → 409）、上一个任务的结果（结果框）、最近一次对比的结果（diff 后写入，拉取成功或 changedRemote 时作废）。runOperation 可注入，测试用假的
+src/ui/watch.ts            变化通知：SSE /api/events 的连接、轮询文件 mtime（任务进行中暂停）、接口改了文件后调 touched()
 src/ui/page.html           网页，原生 JS，不需要构建。概览（本地 → 草稿 → 发布）、结果框、文本按后台页签分组、图片按槽位 × 语言排成表
 src/ui/images.ts           图片表的数据：每格的本地文件、后台路径、状态（待上传 / 已在后台 / 缺少必填…）
 src/slots.ts               后台图片槽位表（照抄 g_ImageTypes）和按尺寸识别（照抄 IsImageTypeValid）
@@ -99,6 +101,7 @@ test/cells-test.ts         图片格子测试（离线）
 test/plan-test.ts          同步计划测试（离线）
 test/text-state-test.ts    文本状态测试（离线）
 test/config-test.ts        项目配置测试（离线）：默认值、继承、设置页和同步一致、addAppLanguages
+test/jobs-test.ts          网页任务测试（离线，假的 runOperation）：锁、结果框、对比结果的写入和作废、出错释放锁
 test/runner-test.ts        runner 测试（进程内调用 runOperation）：结果字段、未登录（模拟后台 appid 999 跳回 /?goto=）、changedRemote
 test/png.ts                测试用的 PNG 生成
 scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-assets、probe-assets2、probe-uploaded、probe-delete、probe-delete2）
@@ -114,7 +117,7 @@ scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-
 
 - **先只读探查，再写代码**：遇到新的后台页面，先写 `scripts/` 下的只读脚本，看 DOM、全局变量、后台的 JS，必要时用 curl 下载 `public/javascript/*.js` 到临时目录用 grep 读。不要靠猜。
 - **第一次真实写入前要征得用户同意**：先 `--dry-run`，再真正执行，写完后要从后台核对结果。保存的都是草稿，不点发布就不会上线。
-- **每个功能都要有模拟后台的端到端测试**：`npm test` 跑九套测试。注意测试必须异步调用 CLI，因为模拟服务器在同一个进程里，同步调用会把它卡死。
+- **每个功能都要有模拟后台的端到端测试**：`npm test` 跑十套测试。注意测试必须异步调用 CLI，因为模拟服务器在同一个进程里，同步调用会把它卡死。
 - **测试配置必须写 `browser.profileDir`**（指向临时目录），否则会用到真实的共享登录；网页测试还要设 `AUTOSW_HOME` 到临时目录，否则会改到真实的项目列表。
 - **网页接口都带 project 参数**（配置文件路径），服务器只接受项目列表里的路径。同一时间只跑一个任务（共用一个浏览器配置文件）。
 - **在 Bash 里用 heredoc / sed 写含反斜杠的代码很容易被吃掉**：这类修改用 Write 写 .autosw/ 下的临时 python 脚本再运行，或者直接用 Edit。

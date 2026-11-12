@@ -1,13 +1,13 @@
 // 本地后台网页：管理多个游戏项目，查看本地内容和改动，勾选后一键上传，配置也在网页上改。只监听 127.0.0.1。
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
-import { appHome, loadConfig, readSettings, selectApps, writeSettings, type AppConfig, type Config } from '../config.js';
+import { loadConfig, readSettings, selectApps, writeSettings, type AppConfig, type Config } from '../config.js';
 import { STEAM_LANGS, writeLocalField } from '../local/storeFiles.js';
 import { readTextState, textView } from '../textState.js';
-import type { Change } from '../sync.js';
-import type { Log } from '../ops.js';
-import { ACTIONS, runOperation, type Action, type RunRequest, type RunResult } from '../runner.js';
+import { ACTIONS } from '../runner.js';
+import { createJobs, type RunReq } from './jobs.js';
+import { createWatch } from './watch.js';
 import { readMeta } from '../partner/meta.js';
 import { LANG_NAMES } from '../fieldInfo.js';
 import { imageBoard } from './images.js';
@@ -16,9 +16,6 @@ import { addProject, createProjectByAppid, projectsRoot, listProjects, projectSu
 import { initProject } from '../projectInit.js';
 import { aiPrompt, readRules, upgradeRules, writeRules } from '../aiRules.js';
 import { createShortcuts, isWindows, pickFolder } from '../desktop.js';
-
-/** 网页发来的请求。delete-images 的位置放在 only 里 */
-interface RunReq { project: string; action: Action; app: string; only?: string[]; dryRun?: boolean; force?: boolean }
 
 export interface UiOptions {
   port: number;
@@ -29,23 +26,16 @@ export interface UiOptions {
 }
 
 export async function startUi(o: UiOptions) {
-  /** 最近一次和线上对比的结果，按 项目|App 存 */
-  const remoteChecks = new Map<string, { at: string; changes: Map<string, Change> }>();
-  const clients = new Set<ServerResponse>();
-  let job: { action: Action; project: string; app: string; log: string[] } | undefined;
-  /** 上一个任务的结果，网页顶部显示成结果框 */
-  let lastResult: { project: string; app: string; action: Action; dryRun: boolean; ok: boolean; changedRemote: boolean; needLogin: boolean; at: string; lines: string[] } | undefined;
+  const jobs = createJobs({ notify: (event, data) => watch.send(event, data) });
+  // 任务进行中不轮询文件；任务结束时 jobs 自己会通知
+  const watch = createWatch({ paused: () => !!jobs.current() });
+  const touched = watch.touched;
 
   const openProject = o.open ? addProject(o.open).config : undefined;
 
-  const send = (event: string, data: unknown) => {
-    const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    for (const c of clients) c.write(msg);
-  };
-
   function appState(c: Config, project: string, app: AppConfig) {
     const text = readTextState(c, app);
-    const remote = remoteChecks.get(project + '|' + app.key);
+    const remote = jobs.remoteCheck(project, app.key);
     const meta = readMeta(c, app);
     const view = textView(text, remote?.changes, meta?.labels);
     const images = imageBoard(c, app, meta);
@@ -81,83 +71,10 @@ export async function startUi(o: UiOptions) {
       current = { ...sum, error, apps };
     }
     return {
-      projects, current, openProject, job: job && { action: job.action, project: job.project, app: job.app }, lastResult,
+      projects, current, openProject, job: jobs.current(), lastResult: jobs.lastResult(),
       windows: isWindows, projectsRoot: projectsRoot(), langs: STEAM_LANGS.map((l) => ({ id: l, name: LANG_NAMES[l] ?? l })),
     };
   }
-
-  async function run(req: RunReq) {
-    // 登录不需要项目配置好：没配置时用默认的共用登录目录
-    const project = req.action === 'login' && !req.project ? '' : requireProject(req.project);
-    const configPath = project && existsSync(project) ? project : undefined;
-    const app = req.action === 'login' ? '' : req.app;
-    job = { action: req.action, project, app, log: [] };
-    const lines: string[] = [];
-    const log: Log = (line, kind) => {
-      job!.log.push(line);
-      if (kind === 'result') lines.push(line.trim());
-      send('log', line);
-    };
-    send('job', { action: req.action, project, app });
-    const common = { configPath, apps: app ? [app] : [] };
-    const op: RunRequest = req.action === 'delete-images' ? { ...common, action: req.action, targets: req.only ?? [], dryRun: req.dryRun }
-      : req.action === 'push' || req.action === 'assets' ? { ...common, action: req.action, dryRun: req.dryRun, force: req.force, only: req.only }
-        : req.action === 'pull' ? { ...common, action: req.action, force: req.force }
-          : { ...common, action: req.action };
-    let r: RunResult = { ok: false, changedRemote: false, needLogin: false, apps: [] };
-    try {
-      r = await runOperation(op, log);
-      const rk = project + '|' + app;
-      const diffed = r.apps[0]?.changes;
-      if (req.action === 'diff' && diffed) remoteChecks.set(rk, { at: new Date().toISOString(), changes: new Map(diffed.map((ch) => [ch.key, ch])) });
-      // 拉取后本地和线上一致了；后台变了的话旧的对比结果也作废
-      if ((req.action === 'pull' && r.ok) || r.changedRemote) remoteChecks.delete(rk);
-    } catch (e) {
-      log(`✗ 错误: ${e instanceof Error ? e.message : e}`, 'result');
-    } finally {
-      lastResult = {
-        project, app, action: req.action, dryRun: !!req.dryRun, ok: r.ok, at: new Date().toISOString(),
-        changedRemote: r.changedRemote, needLogin: r.needLogin, lines,
-      };
-      job = undefined;
-      send('done', { ok: r.ok });
-      send('changed', null);
-    }
-  }
-
-  // 本地文件变了（AI 或编辑器改的）就通知网页刷新。文件不多，直接轮询 mtime
-  const signature = () => {
-    const parts: string[] = [];
-    const walk = (p: string) => {
-      if (!existsSync(p)) return;
-      const s = statSync(p);
-      if (!s.isDirectory()) { parts.push(p + s.mtimeMs + ':' + s.size); return; }
-      for (const f of readdirSync(p)) walk(join(p, f));
-    };
-    walk(join(appHome(), 'projects.json'));
-    for (const { config } of listProjects()) {
-      try {
-        walk(config);
-        walk(join(config, '..', 'STEAM_RULES.md'));
-        if (!existsSync(config)) continue;
-        const c = loadConfig(config);
-        for (const a of c.apps) {
-          walk(a.storeDir); walk(a.assets.dir);
-          for (const d of ['snapshots', 'assets', 'remote']) walk(join(c.stateDir, d, a.key + '.json'));
-        }
-      } catch (e) {
-        parts.push('error:' + e);
-      }
-    }
-    return parts.join('|');
-  };
-  let lastSig = signature();
-  const timer = setInterval(() => {
-    if (!clients.size || job) return;
-    const s = signature();
-    if (s !== lastSig) { lastSig = s; send('changed', null); }
-  }, 1000);
-  const touched = () => { lastSig = signature(); send('changed', null); };
 
   const json = (res: ServerResponse, code: number, body: unknown) => {
     res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
@@ -205,10 +122,7 @@ export async function startUi(o: UiOptions) {
         case 'GET /api/state':
           return json(res, 200, state(q('project')));
         case 'GET /api/events':
-          res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-          res.write(': hi\n\n');
-          clients.add(res);
-          req.on('close', () => clients.delete(res));
+          watch.attach(res);
           return;
         case 'GET /api/asset': {
           const { app } = appOf(q('project'), q('app'));
@@ -231,7 +145,7 @@ export async function startUi(o: UiOptions) {
       if (url.pathname === '/api/images/drop') {
         // 网页拖进来的图片，请求体是文件本身；不带 cell 就放进待分类，带 cell（格子 key，例如 header|schinese）就直接放到那一格
         const { app } = appOf(q('project'), q('app'));
-        if (job?.action === 'assets') return json(res, 409, { error: '正在上传图片，等它结束再放新图片' });
+        if (jobs.busyWith('assets')) return json(res, 409, { error: '正在上传图片，等它结束再放新图片' });
         const bytes = await readRaw(req, 50 * 1024 * 1024);
         const name = q('name') ?? '';
         const cell = q('cell');
@@ -286,7 +200,7 @@ export async function startUi(o: UiOptions) {
         case '/api/images/sort': {
           // 只在本地移动文件，不碰后台，不占用任务；只是别在上传图片的时候挪文件
           const { app } = appOf(b.project, b.app);
-          if (job?.action === 'assets') return json(res, 409, { error: '正在上传图片，等它结束再整理' });
+          if (jobs.busyWith('assets')) return json(res, 409, { error: '正在上传图片，等它结束再整理' });
           const items = sortInbox(app);
           touched();
           return json(res, 200, { items, lines: items.map(describeItem) });
@@ -294,10 +208,14 @@ export async function startUi(o: UiOptions) {
         case '/api/run': {
           const r = b as RunReq;
           if (!ACTIONS.includes(r.action)) return json(res, 400, { error: '未知操作' });
-          if (job) return json(res, 409, { error: `正在执行 ${job.action}，请等它结束` });
+          const busy = jobs.current();
+          if (busy) return json(res, 409, { error: `正在执行 ${busy.action}，请等它结束` });
           if (r.action !== 'login') appOf(r.project, r.app); // 先校验项目和 App
           else if (r.project) requireProject(r.project);
-          void run(r);
+          // 登录不需要项目配置好：没配置时用默认的共用登录目录
+          const project = r.action === 'login' && !r.project ? '' : requireProject(r.project);
+          const started = jobs.start({ ...r, project }, project && existsSync(project) ? project : undefined);
+          if ('error' in started) return json(res, 409, { error: started.error });
           return json(res, 202, { ok: true });
         }
         case '/api/shortcut':
@@ -322,8 +240,7 @@ export async function startUi(o: UiOptions) {
   return {
     url,
     close: () => {
-      clearInterval(timer);
-      for (const c of clients) c.end();
+      watch.close();
       server.closeAllConnections();
       server.close();
     },
