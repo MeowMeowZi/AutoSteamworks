@@ -15,6 +15,13 @@ export interface LastResult {
   ok: boolean; changedRemote: boolean; needLogin: boolean; at: string; lines: string[];
 }
 
+/**
+ * 最近一次知道的登录状态。服务端读不到 Cookie（浏览器配置文件同一时间只能被一个进程打开），
+ * 所以按最近一次碰过后台的任务推断：跳回首页 = 没登录，成功 = 已登录，其他失败不改变。
+ * 不分项目：大多数项目共用一个登录（~/.autosteamworks/profile）。
+ */
+export interface LoginStatus { loggedIn: boolean; at: string }
+
 export interface RemoteCheck { at: string; changes: Map<string, Change> }
 
 export interface JobsOptions {
@@ -27,6 +34,7 @@ export interface JobsOptions {
 export function createJobs({ notify, runOp = runOperation }: JobsOptions) {
   let job: Job | undefined;
   let last: LastResult | undefined;
+  let login: LoginStatus | undefined;
   /** 按 项目|App 存 */
   const remoteChecks = new Map<string, RemoteCheck>();
 
@@ -50,6 +58,7 @@ export function createJobs({ notify, runOp = runOperation }: JobsOptions) {
     let r: RunResult = { ok: false, changedRemote: false, needLogin: false, apps: [] };
     try {
       r = await runOp(toRunRequest(req, configPath, app), log);
+      if (r.needLogin || r.ok) login = { loggedIn: !r.needLogin, at: new Date().toISOString() };
       const rk = project + '|' + app;
       const diffed = r.apps[0]?.changes;
       if (req.action === 'diff' && diffed) remoteChecks.set(rk, { at: new Date().toISOString(), changes: new Map(diffed.map((ch) => [ch.key, ch])) });
@@ -79,6 +88,7 @@ export function createJobs({ notify, runOp = runOperation }: JobsOptions) {
     /** 正在跑的是不是这个操作 */
     busyWith: (action: Action) => job?.action === action,
     lastResult: () => last,
+    loginStatus: () => login,
     remoteCheck: (project: string, app: string) => remoteChecks.get(project + '|' + app),
   };
 }

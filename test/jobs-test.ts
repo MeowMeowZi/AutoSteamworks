@@ -81,4 +81,22 @@ await login.done;
 assert.deepEqual(calls.at(-1), { configPath: undefined, apps: [], action: 'login' });
 assert.equal(jobs.lastResult()!.app, '');
 
+// ---- 登录状态：按最近一次碰过后台的任务推断 ----
+const fresh = createJobs({ notify: () => {}, runOp: (r) => next(r, () => {}) });
+const run1 = async (r: RunReq) => { const s = fresh.start(r, 'P'); assert.ok(!('error' in s)); await s.done; };
+assert.equal(fresh.loginStatus(), undefined, '没跑过任务时未知');
+next = async () => result({ ok: false, needLogin: true });
+await run1(req('pull'));
+assert.equal(fresh.loginStatus()!.loggedIn, false, '跳回首页 = 没登录');
+next = async () => result({ ok: false });
+await run1(req('diff'));
+assert.equal(fresh.loginStatus()!.loggedIn, false, '其他原因失败不改变登录状态');
+next = async () => result({ ok: true });
+await run1(req('login', { project: '' }));
+assert.equal(fresh.loginStatus()!.loggedIn, true, '登录成功');
+assert.ok(fresh.loginStatus()!.at);
+next = async () => { throw new Error('炸了'); };
+await run1(req('diff'));
+assert.equal(fresh.loginStatus()!.loggedIn, true, '出错不改变登录状态');
+
 console.log('✓ 网页任务测试通过');

@@ -81,9 +81,9 @@ src/plan.ts                同步计划（纯函数，不碰浏览器和文件�
 src/lint.ts                规则检查（简短描述长度、BBCode 闭合、未翻译）
 src/textState.ts           App 文本状态：readTextState（本地字段、快照、改动、规则检查、“拉取过”= 本地文件和快照都有）和 textView（网页的字段视图：差异片段、线上对比、lang、shape）。status / check / 网页只调它
 src/ui/server.ts           `ui` 命令的 HTTP 服务：路由、/api/state（拼网页要的状态）、校验 project 参数。任务和变化通知不在这里
-src/ui/jobs.ts             网页的任务：同一时间只跑一个（start 有任务时返回 error → 409）、上一个任务的结果（结果框）、最近一次对比的结果（diff 后写入，拉取成功或 changedRemote 时作废）。runOperation 可注入，测试用假的
+src/ui/jobs.ts             网页的任务：同一时间只跑一个（start 有任务时返回 error → 409）、上一个任务的结果（结果框）、最近一次对比的结果（diff 后写入，拉取成功或 changedRemote 时作废）、登录状态（读不到 Cookie，按最近一次任务推断：needLogin = 未登录，成功 = 已登录，其他失败不变；不分项目）。runOperation 可注入，测试用假的
 src/ui/watch.ts            变化通知：SSE /api/events 的连接、轮询文件 mtime（任务进行中暂停）、接口改了文件后调 touched()
-src/ui/page.html           网页，原生 JS，不需要构建。概览（本地 → 草稿 → 发布）、结果框、文本按后台页签分组、图片按槽位 × 语言排成表
+src/ui/page.html           网页，原生 JS，不需要构建。顶栏：项目切换 + 登录状态；侧栏只有一个 App 时不列 App；概览是一行状态条（待上传、问题数，点击跳页签）；结果框；文本按后台页签分组；图片按槽位 × 语言排成表，每格一张缩略图（本地优先），点开弹窗并排看本地 / 后台、删除后台图；长说明收进 <details>“ⓘ 说明”；没有可上传内容时隐藏底部操作栏
 src/ui/images.ts           图片表的数据：每格的本地文件、后台路径、状态（待上传 / 已在后台 / 缺少必填…）
 src/slots.ts               后台图片槽位表（照抄 g_ImageTypes）和按尺寸识别（照抄 IsImageTypeValid）
 src/fieldInfo.ts           字段名 → 后台页签 / 分组 / 中文名；fieldShape 决定网页怎么画（语言表 / 标签 / 数值+单位 / 普通）。page.html 不解析字段名
@@ -125,6 +125,7 @@ scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-
 - **规则检查只写确认过的规则**：简短描述的 200-300 是 2026-11-11 从真实编辑页的脚本里读到的（按 JS `.length` 计数，超过 300 只是标红，不阻止保存）。新增规则前先探查。
 - **用户的使用方式**：这个工具以后会放进其他准备上架的游戏项目里用。网页负责查看和上传；AI（Claude Code）按游戏项目里的 `STEAM_RULES.md` 改本地文件，不直接上传。
 - **用户的环境**：`NODE_ENV=production` 且 npm `omit=dev`，安装依赖要用 `npm i --include=dev`。TypeScript 7 需要在 tsconfig 里显式写 `"types": ["node"]`。
+- **网页审美约定**（2026-11-12 用户确认）：浅色、顶栏 Steam 深蓝；不重复显示同一信息（规则检查只在状态条和问题页签）；说明默认收起；危险操作（删除后台图）放进弹窗；“演练”在网页上叫“预览将要上传的内容”。
 - **网页上和语言无关的字段**（page.html 的 renderCommon）：支持语言画成“语言 × 界面/完全音频/字幕”表；功能、类型、平台、向导类复选框画成标签；其余一行一个，字段名放在鼠标悬停提示里；存储空间/内存的数值和单位合成一行。改网页后用无头 Edge 截图检查（脚本放 `.autosw/` 下，在进程内 `startUi`，只做 GET）。
 - **在浏览器里执行的代码写成字符串**传给 `page.evaluate`，避免 tsx 往函数里注入 `__name`。
 - **和用户用中文交流**，代码注释和 CLI 输出也用中文。

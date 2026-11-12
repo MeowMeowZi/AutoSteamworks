@@ -71,7 +71,7 @@ export async function startUi(o: UiOptions) {
       current = { ...sum, error, apps };
     }
     return {
-      projects, current, openProject, job: jobs.current(), lastResult: jobs.lastResult(),
+      projects, current, openProject, job: jobs.current(), lastResult: jobs.lastResult(), login: jobs.loginStatus(),
       windows: isWindows, projectsRoot: projectsRoot(), langs: STEAM_LANGS.map((l) => ({ id: l, name: LANG_NAMES[l] ?? l })),
     };
   }
