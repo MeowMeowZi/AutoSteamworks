@@ -74,7 +74,8 @@ src/local/imageCells.ts    图片“格子”（槽位 × 语言，见 GLOSSARY.
 src/local/inbox.ts         “待分类”收件箱：计划（planInbox）和整理（sortInbox），语言线索（langHints）
 src/local/assetFiles.ts    扫描 assets/{store,library}/<语言>/、assets/screenshots/；上传记录（sha256）
 src/runner.ts              操作运行：runOperation(req, log) 读配置、选 App、开关浏览器、逐个执行、汇总成 RunResult（ok / changedRemote / needLogin / 每个 App 的 diff 结果）。命令行和网页的 pull/diff/push/assets/delete-images/login 都只调它
-src/ops.ts                 每个 App 的 pull / diff / push / assets / delete-images 具体步骤，只给 runner 用。log(line, 'result') 标记结果行，网页结果框只显示这些
+src/ops.ts                 每个 App 的 pull / diff / push / assets / delete-images 具体步骤，只给 runner 用：读本地 → 调 plan 算计划 → 去后台执行 → 写回记录 → 打日志。log(line, 'result') 标记结果行，网页结果框只显示这些
+src/plan.ts                同步计划（纯函数，不碰浏览器和文件）：拉取能不能覆盖、新语言、要推送哪些字段、推送后的快照、要上传哪些图（和网页一样用 scanCells，尺寸不对的在本地就拒绝）、上传 / 删除后的上传记录
 src/lint.ts                规则检查（简短描述长度、BBCode 闭合、未翻译）
 src/ui/server.ts           `ui` 命令的 HTTP 服务：/api/state、/api/run（同一时间只跑一个任务）、/api/field、SSE /api/events（轮询文件 mtime）
 src/ui/page.html           网页，原生 JS，不需要构建。概览（本地 → 草稿 → 发布）、结果框、文本按后台页签分组、图片按槽位 × 语言排成表
@@ -92,6 +93,7 @@ test/assets-e2e.ts         图片端到端测试
 test/ui-e2e.ts             网页接口端到端测试（在进程内启动 startUi）
 test/inbox-test.ts         收件箱整理测试（离线）
 test/cells-test.ts         图片格子测试（离线）
+test/plan-test.ts          同步计划测试（离线）
 test/runner-test.ts        runner 测试（进程内调用 runOperation）：结果字段、未登录（模拟后台 appid 999 跳回 /?goto=）、changedRemote
 test/png.ts                测试用的 PNG 生成
 scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-assets、probe-assets2、probe-uploaded、probe-delete、probe-delete2）
@@ -107,7 +109,7 @@ scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-
 
 - **先只读探查，再写代码**：遇到新的后台页面，先写 `scripts/` 下的只读脚本，看 DOM、全局变量、后台的 JS，必要时用 curl 下载 `public/javascript/*.js` 到临时目录用 grep 读。不要靠猜。
 - **第一次真实写入前要征得用户同意**：先 `--dry-run`，再真正执行，写完后要从后台核对结果。保存的都是草稿，不点发布就不会上线。
-- **每个功能都要有模拟后台的端到端测试**：`npm test` 跑六套测试。注意测试必须异步调用 CLI，因为模拟服务器在同一个进程里，同步调用会把它卡死。
+- **每个功能都要有模拟后台的端到端测试**：`npm test` 跑七套测试。注意测试必须异步调用 CLI，因为模拟服务器在同一个进程里，同步调用会把它卡死。
 - **测试配置必须写 `browser.profileDir`**（指向临时目录），否则会用到真实的共享登录；网页测试还要设 `AUTOSW_HOME` 到临时目录，否则会改到真实的项目列表。
 - **网页接口都带 project 参数**（配置文件路径），服务器只接受项目列表里的路径。同一时间只跑一个任务（共用一个浏览器配置文件）。
 - **在 Bash 里用 heredoc / sed 写含反斜杠的代码很容易被吃掉**：这类修改用 Write 写 .autosw/ 下的临时 python 脚本再运行，或者直接用 Edit。

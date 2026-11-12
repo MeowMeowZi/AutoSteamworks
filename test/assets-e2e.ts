@@ -72,7 +72,7 @@ try {
   put('screenshots/bad.png', png(800, 600));
   out = await cli('assets'); console.log(out);
   assert.match(out, /store\/english\/header\.png（已修改）\s+形象图片/);
-  assert.match(out, /screenshots\/bad\.png\s+尺寸 800x600 不匹配/);
+  assert.match(out, /screenshots\/bad\.png\s+尺寸 800x600 对不上任何类型/, '尺寸不对的图在本地就拒绝，不发给后台');
   assert.match(out, /EXIT 1/, '有失败时退出码为 1');
   assert.deepEqual(srv.uploads.map((u) => u.filename), ['header.png']);
 

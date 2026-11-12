@@ -17,7 +17,7 @@
   "scripts": {
     "autosw": "node bin/autosw.js",
     "typecheck": "tsc --noEmit",
-    "test": "tsx test/e2e.ts && tsx test/assets-e2e.ts && tsx test/ui-e2e.ts && tsx test/inbox-test.ts && tsx test/cells-test.ts && tsx test/runner-test.ts"
+    "test": "tsx test/e2e.ts && tsx test/assets-e2e.ts && tsx test/ui-e2e.ts && tsx test/inbox-test.ts && tsx test/cells-test.ts && tsx test/runner-test.ts && tsx test/plan-test.ts"
   },
   "engines": {
     "node": ">=20"

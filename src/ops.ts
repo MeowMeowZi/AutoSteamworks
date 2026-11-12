@@ -4,15 +4,16 @@ import type { Page } from 'playwright-core';
 import { addAppLanguages, type AppConfig, type Config } from './config.js';
 import { hasLoginCookie, isLoginPage, openBrowser, PARTNER_HOME, sleep } from './browser.js';
 import type { FieldValue } from './partner/form.js';
-import { fetchRemote, fetchRemoteAll, pushStore, supportedLanguages } from './partner/store.js';
+import { fetchRemote, fetchRemoteAll, pushStore } from './partner/store.js';
 import { hasLocal, keepLanguages, readLocal, readSnapshot, splitLocalized, writeLocal, writeSnapshot } from './local/storeFiles.js';
-import { localEdits, threeWay, type Change } from './sync.js';
+import { threeWay, type Change } from './sync.js';
 import { deleteAssets, openAssetsPage, uploadAssets } from './partner/assets.js';
 import { saveRemoteMeta } from './partner/meta.js';
 import { remotePath, SLOTS } from './slots.js';
-import { cellName, filesIn, parseCell, remoteLang, scanCells, type Cell } from './local/imageCells.js';
+import { cellName, remoteLang, scanCells, type Cell } from './local/imageCells.js';
 import { LANG_NAMES } from './fieldInfo.js';
-import { assetStates, readManifest, scanAssets, writeManifest } from './local/assetFiles.js';
+import { readManifest, writeManifest } from './local/assetFiles.js';
+import { clearCellRecords, manifestAfterUpload, newLanguages, planAssets, planDelete, planPush, pullBlockers, pushEntries, snapshotAfterPush } from './plan.js';
 
 /**
  * result：结果行（成功、失败、警告、后台位置、提醒），网页的结果框只显示这些；
@@ -47,17 +48,14 @@ export function printChange(log: Log, c: Change, verbose: boolean, kind: LogKind
 
 /** 拉取线上内容。本地有未推送的改动时不覆盖（除非 force）。返回是否拉取了 */
 export async function pullApp(page: Page, c: Config, app: AppConfig, o: { force?: boolean }, log: Log) {
-  const base = readSnapshot(c, app);
-  if (hasLocal(app) && base && !o.force) {
-    const edits = localEdits(readLocal(app), base);
-    if (edits.length) {
-      log(`  跳过：本地有 ${edits.length} 个未推送的改动（${edits.slice(0, 3).map(display).join(', ')}…），先 push 或加 --force`, 'result');
-      return false;
-    }
+  const edits = pullBlockers(hasLocal(app) ? readLocal(app) : undefined, readSnapshot(c, app), o.force);
+  if (edits.length) {
+    log(`  跳过：本地有 ${edits.length} 个未推送的改动（${edits.slice(0, 3).map(display).join(', ')}…），先 push 或加 --force`, 'result');
+    return false;
   }
   const all = await fetchRemoteAll(page, c, app);
   // 后台“支持的语言”里勾了、本地还没同步的语言：加进配置，一起拉下来
-  const added = supportedLanguages(all).filter((l) => !app.languages.includes(l));
+  const added = newLanguages(all, app.languages);
   if (added.length) {
     addAppLanguages(c.file, app.key, added);
     app.languages = [...app.languages, ...added];
@@ -94,23 +92,18 @@ export async function pushApp(page: Page, c: Config, app: AppConfig, o: PushOpts
     log('  尚未 pull，跳过（必须先 pull 才能安全地推送）', 'result');
     return { failed: false, pushed: false };
   }
-  let changes = threeWay(readLocal(app), await fetchRemote(page, c, app), base);
-  if (o.only) changes = changes.filter((ch) => o.only!.includes(ch.key));
-  changes.filter((ch) => ch.kind !== 'local').forEach((ch) => printChange(log, ch, false, ch.kind === 'remote' ? 'detail' : 'result'));
-  const toPush = changes.filter((ch) => ch.kind === 'local' || (o.force && ch.kind === 'conflict'));
-  if (!toPush.length) {
+  const plan = planPush(readLocal(app), await fetchRemote(page, c, app), base, o);
+  plan.changes.filter((ch) => ch.kind !== 'local').forEach((ch) => printChange(log, ch, false, ch.kind === 'remote' ? 'detail' : 'result'));
+  if (!plan.toPush.length) {
     log('  没有需要推送的改动', 'result');
     return { failed: false, pushed: false };
   }
-  toPush.forEach((ch) => printChange(log, ch, !!o.dryRun));
+  plan.toPush.forEach((ch) => printChange(log, ch, !!o.dryRun));
   if (o.dryRun) return { failed: false, pushed: false };
 
-  const r = await pushStore(page, c, app, toPush.map((ch) => [ch.key, ch.local!]));
+  const r = await pushStore(page, c, app, pushEntries(plan));
   await saveRemoteMeta(page, c, app); // pushStore 最后停在重新加载的编辑页上
-  // 只把成功保存的字段写进快照；其他字段保持原来的基准，否则会误把线上改动当成本地改动
-  const snap = { ...base };
-  for (const k of r.saved) snap[k] = r.after[k];
-  writeSnapshot(c, app, snap);
+  writeSnapshot(c, app, snapshotAfterPush(base, r.saved, r.after));
   log(`  ✓ 已保存 ${r.saved.length} 个字段（HTTP ${r.status}）`, 'result');
   if (r.missing.length) log(`  ✗ 页面上找不到: ${r.missing.map(display).join(', ')}`, 'result');
   if (r.notPersisted.length) log(`  ✗ 提交了但重新加载后值不对: ${r.notPersisted.map(display).join(', ')}`, 'result');
@@ -126,32 +119,30 @@ export interface AssetsOpts {
 
 /** 上传图片。返回 failed / pushed 两个标志 */
 export async function assetsApp(page: Page, c: Config, app: AppConfig, o: AssetsOpts, log: Log) {
-  let failed = false, pushed = false;
-  const { assets, warnings } = scanAssets(app);
-  warnings.forEach((w) => log(`  ⚠ ${w}`, 'result'));
-  if (!assets.length) {
+  const scan = scanCells(app);
+  scan.warnings.forEach((w) => log(`  ⚠ ${w}`, 'result'));
+  const manifest = readManifest(c, app);
+  const plan = planAssets(scan, manifest, { ...o, allAges: app.assets.screenshotsAllAges });
+  plan.rejected.forEach((x) => log(`  ✗ ${x.rel}  ${x.reason}`, 'result'));
+  let failed = plan.rejected.length > 0, pushed = false;
+  if (!plan.total && !plan.rejected.length) {
     log(`  ${app.assets.dir} 下没有图片`);
     return { failed, pushed };
   }
-  const manifest = readManifest(c, app);
-  const states = assetStates(assets, manifest);
-  const todo = states.filter((s) => (o.only ? o.only.includes(s.asset.rel) : o.force || s.state !== 'same'));
-  log(`  共 ${assets.length} 张，需要上传 ${todo.length} 张`);
-  if (!todo.length) return { failed, pushed };
-
-  const hasShots = todo.some((s) => s.asset.tab === 'screenshot');
-  if (hasShots && app.assets.screenshotsAllAges === undefined) {
-    log('  ✗ 有截图要上传，但配置里没设置 assets.screenshotsAllAges（Steam 要求声明截图是否适合所有年龄）', 'result');
+  log(`  共 ${plan.total} 张，需要上传 ${plan.todo.length} 张`);
+  if (!plan.todo.length) return { failed, pushed };
+  if (plan.error) {
+    log(`  ✗ ${plan.error}`, 'result');
     return { failed: true, pushed };
   }
-  if (!o.dryRun && todo.some((s) => s.asset.tab !== 'screenshot')) {
+  if (!o.dryRun && plan.todo.some((s) => s.file.tab !== 'screenshot')) {
     log('  ℹ Steam 规定：基础宣传图只能包含游戏美术、游戏名称和官方副标题；宣传更新/活动的文字要作为替代艺术作品上传。');
   }
 
   await openAssetsPage(page, c, app);
-  const results = await uploadAssets(page, c, todo.map((s) => ({ ...s.asset, expectChange: s.state !== 'same' })), { allAges: app.assets.screenshotsAllAges, dryRun: !!o.dryRun });
+  const results = await uploadAssets(page, c, plan.todo.map((s) => ({ ...s.file, expectChange: s.state !== 'same' })), { allAges: app.assets.screenshotsAllAges, dryRun: !!o.dryRun });
   for (const [i, r] of results.entries()) {
-    const s = todo[i];
+    const s = plan.todo[i];
     const note = s.state === 'changed' ? '（已修改）' : '';
     if (!r.ok) {
       failed = true;
@@ -159,20 +150,19 @@ export async function assetsApp(page: Page, c: Config, app: AppConfig, o: Assets
       if (r.body) log(`      ${r.body.slice(0, 300).replace(/\s+/g, ' ')}`);
       continue;
     }
-    const where = s.asset.lang && r.key?.endsWith('|' + s.asset.lang) ? ` [${s.asset.lang}]` : '';
+    const where = s.file.lang && r.key?.endsWith('|' + s.file.lang) ? ` [${s.file.lang}]` : '';
     const slot = SLOTS.find((x) => x.label === r.type);
     log(`  ${o.dryRun ? '→' : '✓'} ${r.rel}${note}  ${r.type} ${r.size}${where}${r.verified ? '（已核对）' : ''}`, 'result');
     if (r.warning) log(`      ⚠ ${r.warning}`, 'result');
-    if (slot && !o.dryRun) log(`      后台位置：${slot.where}${slot.localized && s.asset.lang ? ' → ' + s.asset.lang : ''}（后台会把文件改名，不显示原文件名）`, 'result');
+    if (slot && !o.dryRun) log(`      后台位置：${slot.where}${slot.localized && s.file.lang ? ' → ' + s.file.lang : ''}（后台会把文件改名，不显示原文件名）`, 'result');
     if (o.dryRun) continue;
     pushed = true;
-    manifest[r.rel] = { hash: s.asset.hash, type: r.type, uploadedAt: new Date().toISOString() };
-    if (s.state === 'changed' && s.asset.tab === 'screenshot') {
+    if (s.state === 'changed' && s.file.tab === 'screenshot') {
       log('      ⚠ 截图改动会作为一张新截图上传，旧的那张需要在后台手动删除', 'result');
     }
   }
   if (!o.dryRun) {
-    writeManifest(c, app, manifest);
+    writeManifest(c, app, manifestAfterUpload(manifest, plan.todo, results, new Date().toISOString()));
     if (pushed) { await openAssetsPage(page, c, app); await saveRemoteMeta(page, c, app); }
   }
   return { failed, pushed };
@@ -183,24 +173,18 @@ export async function assetsApp(page: Page, c: Config, app: AppConfig, o: Assets
  * 本地文件不动；删掉后把同一位置本地图片的上传记录也清掉，这样网页上会显示“待上传”而不是“已在后台”。
  */
 export async function deleteImagesApp(page: Page, c: Config, app: AppConfig, o: { targets: string[]; dryRun?: boolean }, log: Log) {
-  let failed = false, pushed = false;
-  const todo: Cell[] = [];
-  for (const t of o.targets) {
-    try {
-      const cell = parseCell(app, t);
-      if (cell.slot.tab === 'screenshot') throw new Error('截图暂不支持删除');
-      todo.push(cell);
-    } catch (e: any) { log(`  ✗ ${t}  ${e.message}`, 'result'); failed = true; }
-  }
-  if (failed) return { failed, pushed };
+  const plan = planDelete(app, o.targets);
+  plan.errors.forEach((e) => log(`  ✗ ${e.target}  ${e.msg}`, 'result'));
+  if (plan.errors.length) return { failed: true, pushed: false };
 
+  let failed = false, pushed = false;
   await openAssetsPage(page, c, app);
   const name = (x: Cell) => cellName(x, (l) => LANG_NAMES[l] ?? l);
-  const results = await deleteAssets(page, c, app, todo.map((x) => ({ assetKey: x.slot.assetKey, lang: x.slot.localized ? x.lang : undefined })), !!o.dryRun);
-  const manifest = readManifest(c, app);
+  const results = await deleteAssets(page, c, app, plan.cells.map((x) => ({ assetKey: x.slot.assetKey, lang: x.slot.localized ? x.lang : undefined })), !!o.dryRun);
+  let manifest = readManifest(c, app);
   const scan = scanCells(app);
   for (const [i, r] of results.entries()) {
-    const x = todo[i], slot = x.slot;
+    const x = plan.cells[i], slot = x.slot;
     if (!r.ok) { failed = true; log(`  ✗ 删除 ${name(x)}  ${r.error}${r.status ? ` (HTTP ${r.status})` : ''}`, 'result'); continue; }
     if (o.dryRun) { log(`  → 删除 ${name(x)}  会清空：${Object.keys(r.fields ?? {}).join('、')}`, 'result'); continue; }
     pushed = true;
@@ -212,12 +196,9 @@ export async function deleteImagesApp(page: Page, c: Config, app: AppConfig, o: 
     const verified = r.before && r.after && remotePath(r.before, slot, remoteLang(x)) ? '（已核对）' : '';
     log(`  ✓ 已删除 ${name(x)}${verified}`, 'result');
     log(`      后台位置：${slot.where}${slot.localized ? ' → ' + x.lang : ''}`, 'result');
-    // 同一格的本地图片：清掉上传记录，网页上会变成“待上传”
-    for (const f of filesIn(scan, x)) {
-      if (!manifest[f.rel]) continue;
-      delete manifest[f.rel];
-      log(`      本地文件 ${f.rel} 没有删除，下次上传会再传上去；不需要的话请把它删掉`, 'result');
-    }
+    const cleared = clearCellRecords(manifest, scan, x);
+    manifest = cleared.manifest;
+    for (const rel of cleared.cleared) log(`      本地文件 ${rel} 没有删除，下次上传会再传上去；不需要的话请把它删掉`, 'result');
   }
   if (!o.dryRun && pushed) {
     writeManifest(c, app, manifest);
