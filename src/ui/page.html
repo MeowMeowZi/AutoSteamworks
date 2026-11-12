@@ -63,7 +63,12 @@
   button.b.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
   button.b.primary:hover:not(:disabled) { background:#1557b0; color:#fff; }
   button.b:disabled { opacity:.45; cursor:not-allowed; }
-  select, input[type=search] { padding:5px 10px; border:1px solid #cfd4db; border-radius:6px; font-family:inherit; font-size:13px; }
+  select, input[type=search], input[type=text], input[type=number] { padding:6px 10px; border:1px solid #cfd4db; border-radius:6px; font-family:inherit; font-size:13px; }
+  input:focus, select:focus, textarea:focus { outline:2px solid var(--accent-bg); border-color:var(--accent); }
+  button.b.big { padding:8px 22px; font-size:14px; }
+  .savebar { position:sticky; bottom:34px; background:var(--bg); padding:10px 0; border-top:1px solid var(--line); z-index:4; }
+  details.rulesbox > summary { cursor:pointer; list-style:none; }
+  details.rulesbox:not([open]) > summary { border-bottom:0; }
   input[type=search] { width:220px; }
   .muted { color:var(--muted); } .small { font-size:12px; }
   .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
@@ -106,6 +111,12 @@
   .issues .error { color:var(--err); } .issues .warn { color:var(--warn); }
 
   /* 文本 */
+  .toolbar { margin-bottom:12px; }
+  .seg { display:inline-flex; border:1px solid #cfd4db; border-radius:6px; overflow:hidden; }
+  .seg button { border:0; background:var(--card); padding:5px 12px; font:inherit; font-size:13px; cursor:pointer; color:#374151; }
+  .seg button + button { border-left:1px solid #cfd4db; }
+  .seg button.on { background:var(--accent-bg); color:var(--accent); font-weight:600; }
+  .seg button:hover:not(.on) { background:#f6f7f9; }
   .textlayout { display:flex; gap:16px; align-items:flex-start; }
   .subnav { width:150px; flex:none; position:sticky; top:64px; }
   .subnav a { display:flex; justify-content:space-between; padding:7px 10px; border-radius:6px; color:inherit; text-decoration:none; }
@@ -447,12 +458,13 @@ function renderText(a) {
   const visible = (t) => rows.filter((r) => r.info.tab === t).length;
   if (!visible(subtab) && !count(subtab)) subtab = TABS.find((t) => visible(t)) || subtab;
 
-  let h = `<div class="row" style="margin-bottom:12px">
-    <select id="view">${[['edited', '只看改动'], ['filled', '有内容的字段'], ['all', '全部字段（包括空的）']].map(([v, t]) => `<option value="${v}" ${view === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
-    <label class="small"><input type="checkbox" id="preview" ${showPreview ? 'checked' : ''}> BBCode 预览</label>
+  const hasEdits = editedFields(a).length > 0;
+  let h = `<div class="row toolbar">
+    <div class="seg">${[['edited', '只看改动'], ['filled', '有内容的'], ['all', '全部字段']].map(([v, t]) => `<button data-view="${v}" class="${view === v ? 'on' : ''}">${t}</button>`).join('')}</div>
     <input type="search" id="filter" placeholder="搜索字段名或内容" value="${esc(filter)}">
+    <label class="small"><input type="checkbox" id="preview" ${showPreview ? 'checked' : ''}> BBCode 预览</label>
     <span class="sp"></span>
-    <span class="small muted">和上次同步时相比：<ins style="background:var(--add);text-decoration:none">新加的</ins> / <del style="background:var(--del)">删掉的</del></span>
+    ${hasEdits ? `<span class="small muted">和上次同步时相比：<ins style="background:var(--add);text-decoration:none">新加的</ins> / <del style="background:var(--del)">删掉的</del></span>` : ''}
   </div>`;
   const remoteOnly = a.remoteOnly || [];
   if (remoteOnly.length) h += `<div class="card"><div class="bd issues"><div class="warn">⚠ 后台有 ${remoteOnly.length} 个字段被改过，本地还是旧的。先点上面的“从后台拉取”再编辑，否则上传时会跳过这些字段。</div></div></div>`;
@@ -461,7 +473,7 @@ function renderText(a) {
     `<a data-subtab="${t}" class="${t === subtab ? 'on' : ''}"><span>${t}</span>${count(t) ? `<span class="pill info">${count(t)} 改动</span>` : `<span class="muted small">${visible(t)}</span>`}</a>`).join('')}</div><div class="textmain">`;
 
   const mine = rows.filter((r) => r.info.tab === subtab);
-  if (!mine.length) h += `<div class="empty-state">${view === 'edited' ? '这里没有改动。左上角切换成“有内容的字段”可以浏览内容。' : '没有匹配的字段'}</div>`;
+  if (!mine.length) h += `<div class="empty-state">${view === 'edited' ? '这里没有改动。点上面的“有内容的”可以浏览全部内容。' : '没有匹配的字段'}</div>`;
   const groups = [...new Set(mine.map((r) => r.info.group))];
   const isPrimary = (g) => mine.some((r) => r.info.group === g && r.info.primary);
   groups.sort((x, y) => Number(!isPrimary(x)) - Number(!isPrimary(y)));
@@ -622,20 +634,19 @@ function projectStatus(p) {
 function renderProjects() {
   let h = `<div class="overview"><h2>游戏项目</h2>
     <div class="muted small">每个游戏项目是电脑上的一个文件夹，商店文本和图片都存在里面。所有项目共用一个 Steam 登录。</div>
-    <div style="margin-top:14px"><b>按 App ID 添加</b>
-      <span class="muted small">自动在 <span class="mono">${esc(S.projectsRoot)}</span> 下建文件夹，语言默认英语 + 简体中文（以后在“设置”里改）</span></div>
-    <div class="row" style="margin-top:6px">
+    <div class="row" style="margin-top:14px">
       <input type="number" id="new-appid" placeholder="App ID，例如 5596340" style="width:200px">
       <input type="text" id="new-name" placeholder="游戏名称（可不填）" style="width:220px">
-      <button class="b primary" data-createproj>添加</button>
+      <button class="b primary" data-createproj>添加项目</button>
+      <span class="muted small" style="cursor:help" title="文件夹建在 ${esc(S.projectsRoot)} 下；语言默认英语 + 简体中文，以后在“设置”里改">ⓘ 会自动建文件夹</span>
     </div>
-    <div style="margin-top:14px"><b>用已有的文件夹</b>
-      <span class="muted small">想让商店文件和游戏工程放在一起（方便游戏项目里的 AI 修改）时用这个</span></div>
-    <div class="row" style="margin-top:6px">
-      ${S.windows ? '<button class="b" data-pickfolder>选择文件夹…</button><span class="muted small">或者</span>' : ''}
-      <input type="search" id="newpath" placeholder="粘贴文件夹路径，例如 D:\\Games\\MyGame" style="width:420px">
-      <button class="b" data-addpath>添加</button>
-    </div></div>`;
+    <details class="help-d" style="margin-top:10px"><summary>用已有的文件夹添加…</summary>
+      <div class="small muted" style="margin:6px 0">想让商店文件和游戏工程放在一起（方便游戏项目里的 AI 修改）时用这个。</div>
+      <div class="row">
+        ${S.windows ? '<button class="b" data-pickfolder>选择文件夹…</button><span class="muted small">或者</span>' : ''}
+        <input type="search" id="newpath" placeholder="粘贴文件夹路径，例如 D:\\Games\\MyGame" style="width:420px">
+        <button class="b" data-addpath>添加</button>
+      </div></details></div>`;
   if (!S.projects.length) {
     h += `<div class="card"><div class="bd"><b>第一次使用？</b><ol style="margin:6px 0 0;padding-left:20px;line-height:1.9">
       <li>在上面填 App ID 点“添加”（或者选择游戏工程的文件夹）。</li>
@@ -647,8 +658,7 @@ function renderProjects() {
       <div class="mono muted">${esc(p.dir)}</div>
       ${p.apps.length ? `<div class="small muted">${p.apps.map((a) => `${esc(a.name || a.key)}（${a.appid}）`).join('、')}</div>` : ''}</div>
       <span class="sp"></span>
-      ${p.config === project ? '<span class="pill info">当前项目</span>' : ''}
-      <button class="b ${p.config === project ? '' : 'primary'}" data-openproj="${esc(p.config)}">打开</button>
+      ${p.config === project ? '<span class="pill info">当前项目</span>' : `<button class="b primary" data-openproj="${esc(p.config)}">打开</button>`}
       <button class="b" data-removeproj="${esc(p.config)}" title="只是从列表里去掉，不删除任何文件">移除</button></div></div>`;
   }
   if (S.windows) h += `<div class="small muted">想从桌面直接打开这个网页？<a data-shortcut>创建桌面快捷方式</a></div>`;
@@ -683,7 +693,7 @@ function langChecks(cls, selected, idx) {
 function renderSettings() {
   if (!draft || draftFor !== project) { loadSettings(); return '<div class="empty-state">加载中…</div>'; }
   const d = draft;
-  let h = `<div class="overview"><h2>设置</h2><div class="muted small">修改后点最下面的“保存”。保存会写入 <span class="mono">${esc(S.current.config)}</span>，文件里的其他内容和注释保持不变。</div></div>`;
+  let h = `<div class="overview"><h2>设置</h2><div class="muted small" title="${esc(S.current.config)}">改完点下面的“保存”，写入项目里的 steam.config.yaml（文件里的注释会保留）。</div></div>`;
   if (settingsError) h += `<div class="err-box">✗ ${esc(settingsError)}</div>`;
   h += `<div class="card"><div class="hd"><h3>同步的语言</h3><span class="small muted">所有 App 默认使用这些语言</span></div><div class="bd">${langChecks('s-lang', d.languages)}</div></div>`;
   h += `<div class="card"><div class="hd"><h3>App</h3><span class="small muted">游戏本体、试玩版、DLC 各是一个 App，各有自己的 App ID</span></div><div class="bd">
@@ -708,7 +718,7 @@ function renderSettings() {
     <label>请求间隔（毫秒）</label><div><input type="number" id="s-delay" value="${d.delayMs}" style="width:120px"><div class="help">两次打开后台页面之间等多久，避免请求太频繁</div></div>
     <label>不同步的字段</label><div><textarea id="s-ignore" style="min-height:80px">${esc(d.ignoreFields.join('\n'))}</textarea><div class="help">每行一个表单字段名，支持 * 通配。在“商店文本”页把鼠标停在字段名上就能看到</div></div>
   </div></div></div>`;
-  h += `<div class="row"><button class="b primary" data-savesettings>保存</button><button class="b" data-resetsettings>放弃修改</button>
+  h += `<div class="row savebar"><button class="b primary" data-savesettings>保存</button><button class="b" data-resetsettings>放弃修改</button>
     <span class="sp"></span>${S.windows ? '<a class="small" data-shortcut>创建桌面快捷方式</a>' : ''}</div>`;
   return h;
 }
@@ -730,21 +740,24 @@ function readDraftFromForm() {
 }
 
 // ================= AI 规则 =================
-let rules = null, rulesFor = '';
+let rules = null, rulesFor = '', rulesOpen = false;
 async function loadRules() { rules = await api('/api/rules?project=' + encodeURIComponent(project)); rulesFor = project; render(); }
 function renderRules() {
   if (!rules || rulesFor !== project) { loadRules(); return '<div class="empty-state">加载中…</div>'; }
   return `<div class="overview"><h2>AI 规则</h2>
-    <div class="muted small">给 AI（例如 Claude Code）看的规则：配置怎么写、商店文本和图片放在哪里、Steam 的规则，以及 AI 必须遵守的约定（只改本地文件，不上传）。
-    最后一节“本项目的风格”可以让 AI 根据项目资料填写，你再确认。</div>
-    <div class="small" style="margin-top:8px"><b>用法</b>：点“复制给 AI”，在游戏项目文件夹里打开 AI（例如 Claude Code），粘贴后发送。
-    AI 会按规则准备配置、商店文本和图片，需要你提供的信息会直接问你。它改完文件，这个网页会自动显示改动，你看完再勾选上传。</div>
-    <div class="row" style="margin-top:8px"><button class="b primary" data-copyprompt>复制给 AI</button><span class="small muted" id="prompt-msg"></span></div>
+    <div class="muted small">让 AI（例如 Claude Code）帮你写商店文本、准备图片。它只改本地文件，改完你在这个网页上看过再上传。</div>
+    <div class="row" style="margin-top:12px"><button class="b primary big" data-copyprompt>复制给 AI</button>
+      <span class="small">然后在游戏项目文件夹里打开 AI，粘贴发送</span><span class="small muted" id="prompt-msg"></span></div>
+    <details class="help-d"><summary>ⓘ 说明</summary><ul>
+      <li>复制的内容 = 项目现状 + 规则全文：配置怎么写、商店文本和图片放在哪里、Steam 的规则，以及 AI 必须遵守的约定（只改本地文件，不上传）。</li>
+      <li>需要你提供的信息，AI 会直接问你。它改完文件，这个网页会自动显示改动，你看完再勾选上传。</li>
+      <li>规则最后一节“本项目的风格”可以让 AI 根据项目资料填写，你再确认。</li></ul></details>
     ${rules.outdated ? `<div class="small" style="margin-top:8px;color:#b45309">这个项目的规则文件是旧版本。点“升级到最新规则”会替换通用部分，“本项目的风格”一节保留不变。
       <button class="b" data-upgraderules>升级到最新规则</button></div>` : ''}
     <div class="mono muted small" style="margin-top:4px">${esc(rules.path)}${rules.exists ? '' : '（还不存在，保存后创建）'}</div></div>
+    <details class="card rulesbox" ${rulesOpen ? 'open' : ''}><summary class="hd"><h3>规则全文</h3><span class="small muted">STEAM_RULES.md · 点开查看或修改</span></summary><div class="bd">
     <textarea class="rules" id="rules">${esc(rules.text)}</textarea>
-    <div class="row" style="margin-top:8px"><button class="b primary" data-saverules>保存</button><span class="small muted" id="rules-msg"></span></div>`;
+    <div class="row" style="margin-top:8px"><button class="b primary" data-saverules>保存</button><span class="small muted" id="rules-msg"></span></div></div></details>`;
 }
 
 async function copyText(text) {
@@ -841,11 +854,12 @@ async function run(body, confirmText) {
 }
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-app],[data-tab],[data-subtab],[data-run],[data-push],[data-assets],[data-edit],[data-revert],[data-save],[data-cancel],[data-pickall],[data-dismiss],[data-openlog],[data-login],[data-quit],[data-page],[data-openproj],[data-removeproj],[data-pickfolder],[data-createproj],[data-addpath],[data-init],[data-shortcut],[data-savesettings],[data-resetsettings],[data-addapp],[data-delapp],[data-saverules],[data-copyprompt],[data-upgraderules],[data-sortinbox],[data-delimg],[data-cellopen],[data-closemodal],[data-stop]');
+  const t = e.target.closest('[data-app],[data-tab],[data-subtab],[data-run],[data-push],[data-assets],[data-edit],[data-revert],[data-save],[data-cancel],[data-pickall],[data-dismiss],[data-openlog],[data-login],[data-quit],[data-page],[data-openproj],[data-removeproj],[data-pickfolder],[data-createproj],[data-addpath],[data-init],[data-shortcut],[data-savesettings],[data-resetsettings],[data-addapp],[data-delapp],[data-saverules],[data-copyprompt],[data-upgraderules],[data-sortinbox],[data-delimg],[data-cellopen],[data-closemodal],[data-stop],[data-view]');
   if (!t) return;
   const a = app();
   const d = t.dataset;
   if (d.stop !== undefined) return;
+  if (d.view) { view = localStorage.view = d.view; render(); return; }
   if (d.cellopen) { openCell = d.cellopen; render(); return; }
   if (d.closemodal !== undefined) { openCell = null; render(); return; }
   if (d.app) { cur = localStorage.appKey = d.app; page = 'app'; editing = null; render(); }
@@ -964,7 +978,6 @@ async function addProject(path) {
 document.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset.pick) { setPick(t.dataset.pick, t.checked, t.dataset.def === '1'); render(); }
-  else if (t.id === 'view') { view = localStorage.view = t.value; render(); }
   else if (t.id === 'preview') { showPreview = t.checked; render(); }
   else if (t.id === 'projsel') switchProject(t.value);
   else if (t.classList.contains('s-own')) {
@@ -1037,6 +1050,7 @@ document.addEventListener('keydown', (e) => {
   if (e.target.id === 'newpath') $('[data-addpath]').click();
   if (e.target.id === 'new-appid' || e.target.id === 'new-name') $('[data-createproj]').click();
 });
+document.addEventListener('toggle', (e) => { if (e.target.classList?.contains('rulesbox')) rulesOpen = e.target.open; }, true);
 document.addEventListener('input', (e) => { if (e.target.id === 'filter') { filter = e.target.value; render(); } });
 
 const es = new EventSource('/api/events');
