@@ -157,14 +157,26 @@
   table.board thead th { background:#fafbfc; font-size:13px; border-top:0; }
   table.board th.slot { width:200px; }
   table.board th.slot b { font-size:14px; display:block; }
-  .thumbs { display:flex; gap:8px; }
-  .thumb { flex:1; min-width:0; }
-  .thumb .cap { font-size:11px; color:var(--muted); }
-  .thumb .box { height:92px; background:#1f2328; border-radius:6px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#8b949e; font-size:12px; text-align:center; padding:4px; }
-  .thumb .box img { max-width:100%; max-height:100%; object-fit:contain; display:block; }
-  .thumb .box.none { background:repeating-linear-gradient(45deg, #f3f4f6, #f3f4f6 6px, #eceef1 6px, #eceef1 12px); color:#9aa4b2; }
-  .cellfoot { margin-top:6px; font-size:12px; }
-  .cellfoot .fn { color:var(--muted); word-break:break-all; }
+  .ibox { position:relative; height:118px; max-width:300px; background:#1f2328; border-radius:6px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#8b949e; font-size:12px; cursor:zoom-in; }
+  .ibox img { max-width:100%; max-height:100%; object-fit:contain; display:block; }
+  .ibox .tag { position:absolute; left:6px; top:6px; font-size:11px; padding:0 6px; border-radius:4px; background:rgba(0,0,0,.55); color:#fff; }
+  .ibox .mini { position:absolute; right:6px; bottom:6px; width:34%; height:40%; border:2px solid #fff; border-radius:4px; background:#1f2328; display:flex; align-items:center; justify-content:center; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.4); }
+  .ibox.empty { height:44px; background:none; border:1.5px dashed #cfd4db; color:#9aa4b2; cursor:default; }
+  td.dropon .ibox.empty, .dropon > .bd > .ibox.empty { border-color:var(--accent); color:var(--accent); }
+  .cellfoot { margin-top:6px; font-size:12px; display:flex; align-items:center; gap:6px; }
+  .req { color:var(--err); cursor:help; }
+  .dropzone { border:1.5px dashed #bcd7f5; background:#f7fbff; border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:13px; color:#374151; }
+  details.help-d { margin-top:6px; font-size:12px; color:var(--muted); }
+  details.help-d summary { cursor:pointer; color:var(--accent); width:max-content; }
+  details.help-d ul { margin:6px 0 0; padding-left:18px; line-height:1.8; }
+  .modal { position:fixed; inset:0; background:rgba(15,20,30,.55); z-index:40; display:flex; align-items:center; justify-content:center; padding:40px; }
+  .mbox { background:var(--card); border-radius:12px; padding:16px 20px; width:min(1100px, 100%); max-height:100%; overflow:auto; box-shadow:0 10px 40px rgba(0,0,0,.3); }
+  .mbox h3 { margin:0; font-size:16px; }
+  .mbox .pair { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:12px; }
+  .mbox .cap { font-weight:600; font-size:13px; margin-bottom:4px; }
+  .mbox .big { height:340px; background:#1f2328; border-radius:8px; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#8b949e; margin-bottom:6px; }
+  .mbox .big img { max-width:100%; max-height:100%; object-fit:contain; }
+  .mbox .big.none { background:repeating-linear-gradient(45deg, #f3f4f6, #f3f4f6 6px, #eceef1 6px, #eceef1 12px); color:#9aa4b2; }
   .shots { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:10px; }
 
   /* 底部操作栏 + 日志 */
@@ -467,87 +479,102 @@ function renderText(a) {
 }
 
 // ================= 图片 =================
-function thumb(cap, url, emptyText) {
-  return `<div class="thumb">${cap ? `<div class="cap">${cap}</div>` : ''}${url
-    ? `<div class="box"><img loading="lazy" src="${esc(url)}" onerror="this.parentNode.textContent='缩略图加载失败'"></div>`
-    : `<div class="box none">${emptyText}</div>`}</div>`;
-}
 const localUrl = (a, rel, v) => `/api/asset?project=${encodeURIComponent(project)}&app=${encodeURIComponent(a.key)}&rel=${encodeURIComponent(rel)}&v=${v}`;
+const imgTag = (url) => `<img loading="lazy" src="${esc(url)}" onerror="this.replaceWith('缩略图加载失败')">`;
+// 格子里的简短状态；完整的一句话（c.text）放在悬停提示和大图弹窗里
+const CELL_SHORT = { pending: '待上传', synced: '已在后台', uploaded: '已上传，未核对', lost: '后台没有了', 'remote-only': '只在后台', 'missing-required': '缺少（必填）', fallback: '用英文版', empty: '' };
+const allCells = (a) => a.images.slots.flatMap((s) => Object.values(s.cells));
+let openCell = null;   // 大图弹窗里显示的格子 key
 
 function imgCell(a, slot, lang, span) {
   const c = slot.cells[lang];
   const id = c.local && 'asset:' + c.local.rel;
-  const pick = c.status === 'pending' ? `<input type="checkbox" data-pick="${esc(id)}" data-def="1" ${isPicked(id, true) ? 'checked' : ''} title="勾选后上传"> ` : '';
-  return `<td data-dropslot="${esc(c.key)}" data-droplabel="${esc(c.name)}" ${span ? `colspan="${span}"` : ''}><div class="thumbs" ${span ? 'style="max-width:420px"' : ''}>
-      ${thumb('本地', c.local && localUrl(a, c.local.rel, c.local.bytes), '本地没有')}
-      ${thumb('后台', c.remoteUrl, a.remoteAt ? '后台没有' : '还没读取<br>点“刷新后台状态”')}
-    </div>
-    <div class="cellfoot">${pick}<span class="pill ${CELL_PILL[c.status]}">${esc(c.text)}</span>
-      ${c.local ? `<div class="fn">${esc(c.local.rel)}${c.local.size ? ' · ' + c.local.size : ''}${c.local.uploadedAt ? ' · 上传于 ' + new Date(c.local.uploadedAt).toLocaleString() : ''}</div>` : ''}
-      ${c.extra.length ? `<div class="fn" style="color:var(--warn)">⚠ 同一位置还有：${c.extra.map(esc).join('、')}</div>` : ''}
-      ${c.remoteUrl ? `<div class="fn"><a href="#" data-delimg="${esc(c.key)}" data-dellabel="${esc(c.name)}" class="delimg">从后台删除</a></div>` : ''}
-    </div></td>`;
+  const pick = c.status === 'pending' ? `<input type="checkbox" data-pick="${esc(id)}" data-def="1" ${isPicked(id, true) ? 'checked' : ''} title="勾选后上传">` : '';
+  const url = c.local ? localUrl(a, c.local.rel, c.local.bytes) : c.remoteUrl;
+  // 本地图和后台图都有、但还没上传：右下角叠一张小的后台图
+  const overlay = c.local && c.remoteUrl && c.status === 'pending' ? `<div class="mini" title="后台现在的图">${imgTag(c.remoteUrl)}</div>` : '';
+  const box = url
+    ? `<div class="ibox" data-cellopen="${esc(c.key)}" title="点击查看大图">${imgTag(url)}<span class="tag">${c.local ? '本地' : '后台'}</span>${overlay}</div>`
+    : `<div class="ibox empty">拖图片到这里</div>`;
+  const short = CELL_SHORT[c.status];
+  return `<td data-dropslot="${esc(c.key)}" data-droplabel="${esc(c.name)}" ${span ? `colspan="${span}"` : ''}>${box}
+    ${short || pick ? `<div class="cellfoot">${pick}<span class="pill ${CELL_PILL[c.status]}" title="${esc(c.text)}">${esc(short)}</span></div>` : ''}
+    ${c.extra.length ? `<div class="cellfoot" style="color:var(--warn)" title="${esc(c.extra.join('、'))}">⚠ 这个位置还有 ${c.extra.length} 张本地图片，只会上传一张</div>` : ''}</td>`;
 }
 
-function renderBoard(a, tabId, dir, title, where) {
+function renderBoard(a, tabId, title, where) {
   const slots = a.images.slots.filter((s) => s.tab === tabId);
   const langs = a.languages;
-  let h = `<div class="card"><div class="hd"><h3>${title}</h3><span class="where">${where}</span>
-    <span class="sp"></span><span class="small muted">文件放在 <code>assets/${dir}/&lt;语言&gt;/</code>，按尺寸自动对应到下面的位置，文件名随意</span></div>
-    <table class="board"><thead><tr><th class="slot">位置</th>${langs.map((l) => `<th>${langName(l)} <span class="mono muted">${l}</span></th>`).join('')}</tr></thead><tbody>`;
+  let h = `<div class="card"><div class="hd"><h3>${title}</h3><span class="where">${where}</span></div>
+    <table class="board"><thead><tr><th class="slot"></th>${langs.map((l) => `<th>${langName(l)}</th>`).join('')}</tr></thead><tbody>`;
   for (const s of slots) {
-    h += `<tr><th class="slot"><b>${esc(s.label)}${s.required ? ' <span style="color:var(--err)">*</span>' : ''}</b>
-      <span class="small muted">${s.width} × ${s.height}${s.match === 'contained' ? '（宽或高一致即可）' : ''}</span>
-      ${s.required ? '<div class="small" style="color:var(--err)">必填</div>' : ''}
-      ${s.localized ? '' : '<div class="small muted">不分语言</div>'}</th>`;
+    h += `<tr><th class="slot"><b>${esc(s.label)}${s.required ? ' <span class="req" title="必填">*</span>' : ''}</b>
+      <span class="small muted">${s.width} × ${s.height}${s.match === 'contained' ? '（宽或高一致即可）' : ''}${s.localized ? '' : ' · 不分语言'}</span></th>`;
     h += s.localized ? langs.map((l) => imgCell(a, s, l)).join('') : imgCell(a, s, '*', langs.length);
     h += '</tr>';
   }
   return h + '</tbody></table></div>';
 }
 
+function renderCellModal(a) {
+  const c = openCell && allCells(a).find((x) => x.key === openCell);
+  if (!c) return '';
+  const side = (cap, url, empty, foot) => `<div class="side"><div class="cap">${cap}</div>
+    <div class="big ${url ? '' : 'none'}">${url ? imgTag(url) : empty}</div><div class="small muted">${foot}</div></div>`;
+  const l = c.local;
+  return `<div class="modal" data-closemodal><div class="mbox" data-stop>
+    <div class="row"><h3>${esc(c.name)}</h3><span class="pill ${CELL_PILL[c.status]}">${esc(c.text)}</span><span class="sp"></span><a data-closemodal>关闭</a></div>
+    <div class="pair">
+      ${side('本地', l && localUrl(a, l.rel, l.bytes), '本地没有',
+        l ? `<span class="mono">${esc(l.rel)}</span>${l.size ? ' · ' + l.size : ''}${l.uploadedAt ? '<br>上传于 ' + new Date(l.uploadedAt).toLocaleString() : ''}` : '')}
+      ${side('后台', c.remoteUrl, a.remoteAt ? '后台没有' : '还没读取后台状态', c.remoteUrl
+        ? `后台会把图片改名，按“位置 + 语言”找，后台列表里点语言名才显示图片。<br><a href="#" data-delimg="${esc(c.key)}" data-dellabel="${esc(c.name)}" class="delimg">从后台删除这张图…</a>` : '')}
+    </div>
+    ${c.extra.length ? `<div class="small" style="color:var(--warn);margin-top:8px">⚠ 同一位置还有：${c.extra.map(esc).join('、')}。后台每个位置只能放一张，只保留一张。</div>` : ''}
+  </div></div>`;
+}
+
 let sortMsg = null;
 function renderInbox(a) {
   const ib = a.images.inbox, ok = ib.items.filter((x) => x.to);
-  let h = `<div class="card"><div class="hd"><h3>待分类</h3><span class="sp"></span>
-    <label class="b" style="cursor:pointer">选择图片…<input type="file" id="pickimgs" multiple accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none"></label></div><div class="bd">
-    <div class="small" style="margin-bottom:8px"><b>把图片直接拖到这个页面上</b>，会按尺寸和文件名自动放到对应位置；拖到下面表格的某一格，就放到那个位置和语言。
-    也可以把图片放进 <code>assets/${ib.dir}/</code> 文件夹，再点“整理”。</div>`;
-  if (sortMsg) h += `<div class="issues" style="margin-bottom:8px">${sortMsg.map((l) => `<div class="${l.startsWith('✗') ? 'error' : ''}">${esc(l)}</div>`).join('')}</div>`;
+  const fallback = langName(a.languages.includes('english') ? 'english' : a.languages[0]);
+  const help = `<details class="help-d"><summary>ⓘ 说明</summary><ul>
+    <li>拖到页面空白处：按尺寸判断位置（920 × 430 默认算商店形象图片，文件名带 library 或“库”才算库形象图片），按文件名判断语言，例如 <code>header_cn.png</code>、<code>主宣传图_英文.png</code>；没写语言就算${fallback}。</li>
+    <li>拖到表格某一格：直接放到那个位置和语言，尺寸不对会拒绝。同一位置原来的图会挪到 <code>assets/已替换/</code>。</li>
+    <li>也可以把图片放进 <code>assets/${ib.dir}/</code>（或 <code>${ib.dir}/schinese/</code> 这样的子文件夹），再回到这里点“整理”。整理好的文件在 <code>assets/store/&lt;语言&gt;/</code>、<code>assets/library/&lt;语言&gt;/</code>、<code>assets/screenshots/</code>。</li>
+    <li>后台会把上传的图片改名（例如 <code>header_schinese.jpg</code>），在后台要按“位置 + 语言”找，不要按原文件名找。</li></ul></details>`;
+  const pickBtn = `<label class="b" style="cursor:pointer">选择图片…<input type="file" id="pickimgs" multiple accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none"></label>`;
+  const msg = sortMsg ? `<div class="issues" style="margin-top:8px">${sortMsg.map((l) => `<div class="${l.startsWith('✗') ? 'error' : ''}">${esc(l)}</div>`).join('')}</div>` : '';
   if (!ib.items.length) {
-    h += `<div class="small muted">现在没有待分类的图片。位置按尺寸判断（920 × 430 默认算商店形象图片，文件名带 library 或“库”才算库形象图片）；
-      语言看文件名，例如 <code>header_cn.png</code>、<code>主宣传图_英文.png</code>，也可以放在 <code>${ib.dir}/schinese/</code> 这样的子文件夹里；没写语言就算${langName(a.languages.includes('english') ? 'english' : a.languages[0])}。</div>`;
-  } else {
-    h += `<table class="board"><thead><tr><th>文件</th><th>尺寸</th><th>会放到</th></tr></thead><tbody>${ib.items.map((it) => `<tr>
+    return `<div class="dropzone"><div class="row"><span><b>添加图片：</b>把图片拖到这个页面上，会按尺寸和文件名自动放好；拖到某一格就放到那一格。</span><span class="sp"></span>${pickBtn}</div>${help}${msg}</div>`;
+  }
+  return `<div class="card"><div class="hd"><h3>待分类</h3><span class="small muted">${ib.items.length} 张</span><span class="sp"></span>${pickBtn}</div><div class="bd">
+    <table class="board"><thead><tr><th>文件</th><th>尺寸</th><th>会放到</th></tr></thead><tbody>${ib.items.map((it) => `<tr>
       <td class="mono small">${esc(it.from)}</td><td class="small">${esc(it.size ?? '')}</td>
       <td class="small">${!it.to ? `<span style="color:var(--err)">✗ ${esc(it.reason)}</span>`
         : it.duplicate ? `和 <code>${esc(it.to)}</code> 完全一样，整理时删掉这张`
         : `${esc(it.slot)}${it.lang ? `（${langName(it.lang)}）` : ''} → <code>${esc(it.to)}</code>${it.replaces.length ? `<div style="color:var(--warn)">原来的 ${it.replaces.map(esc).join('、')} 会挪到 已替换/</div>` : ''}`}</td></tr>`).join('')}</tbody></table>
-      <div class="row" style="margin-top:8px"><button class="b primary" data-sortinbox ${ok.length ? '' : 'disabled'}>整理 ${ok.length} 张</button>
-      <span class="small muted">只在本地移动文件，不会上传。整理后在下面的表里勾选上传。</span></div>`;
-  }
-  return h + '</div></div>';
+    <div class="row" style="margin-top:8px"><button class="b primary" data-sortinbox ${ok.length ? '' : 'disabled'}>整理 ${ok.length} 张</button>
+    <span class="small muted">只在本地移动文件，不会上传。整理后在下面的表里勾选上传。</span></div>${help}${msg}</div></div>`;
 }
 
 function renderImages(a) {
   const im = a.images;
   let h = '';
-  if (im.issues.length) h += `<div class="card"><div class="hd"><h3>需要注意</h3></div><div class="bd issues">${im.issues.map((i) => `<div class="${i.level}">${i.level === 'error' ? '✗' : '⚠'} ${esc(i.msg)}</div>`).join('')}</div></div>`;
-  if (!a.remoteAt) h += `<div class="card"><div class="bd issues"><div class="warn">还没读取过后台状态，所以“后台”一栏是空的。点上面的“刷新后台状态”读取一次（只读，不会修改后台）。</div></div></div>`;
+  if (!a.remoteAt) h += `<div class="card"><div class="bd issues"><div class="warn">还没读取过后台状态，所以看不到后台的图。点上面的“刷新后台状态”读取一次（只读，不会修改后台）。</div></div></div>`;
   h += renderInbox(a);
-  h += `<div class="small muted" style="margin:0 0 10px">提示：后台会把上传的图片改名（例如 <code>header_schinese.jpg</code>），在后台要按“位置 + 语言”找，不要按原文件名找。后台列表里点语言名才会显示图片。</div>`;
-  h += renderBoard(a, 'store', 'store', '商店宣传图', '商店页管理 → 图像资产 → 商店资产');
-  h += renderBoard(a, 'library', 'library', '库资源', '商店页管理 → 图像资产 → 库资产');
+  h += renderBoard(a, 'store', '商店宣传图', '商店页管理 → 图像资产 → 商店资产');
+  h += renderBoard(a, 'library', '库资源', '商店页管理 → 图像资产 → 库资产');
   const sh = im.screenshots;
   h += `<div class="card" data-dropslot="screenshot|*" data-droplabel="截图"><div class="hd"><h3>截图</h3><span class="where">${esc(sh.where)}</span><span class="sp"></span>
     <span class="small muted">本地 ${sh.local.length} 张 · 后台 ${sh.remoteCount ?? '未知'} 张 · 至少 1920 × 1080，所有语言共用</span></div><div class="bd">`;
   h += sh.local.length ? `<div class="shots">${sh.local.map((x) => {
     const id = 'asset:' + x.rel, pending = x.state !== 'same';
-    return `<div>${thumb('', localUrl(a, x.rel, x.bytes))}<div class="cellfoot">${pending ? `<input type="checkbox" data-pick="${esc(id)}" data-def="1" ${isPicked(id, true) ? 'checked' : ''}> ` : ''}
-      <span class="pill ${pending ? 'info' : 'ok'}">${pending ? '待上传' : '已上传'}</span><div class="fn">${esc(x.rel)} · ${x.size}</div></div></div>`;
-  }).join('')}</div>` : '<div class="muted small">本地没有截图。放到 <code>assets/screenshots/</code> 下。</div>';
+    return `<div><div class="ibox" title="${esc(x.rel)} · ${x.size}">${imgTag(localUrl(a, x.rel, x.bytes))}</div><div class="cellfoot">${pending ? `<input type="checkbox" data-pick="${esc(id)}" data-def="1" ${isPicked(id, true) ? 'checked' : ''}>` : ''}
+      <span class="pill ${pending ? 'info' : 'ok'}">${pending ? '待上传' : '已上传'}</span></div></div>`;
+  }).join('')}</div>` : '<div class="ibox empty">拖截图到这里</div>';
   h += `<div class="small muted" style="margin-top:8px">改过的截图会作为新截图上传，旧的要在后台手动删除。</div></div></div>`;
-  return h;
+  return h + renderCellModal(a);
 }
 
 // ================= 问题 =================
@@ -814,10 +841,13 @@ async function run(body, confirmText) {
 }
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('[data-app],[data-tab],[data-subtab],[data-run],[data-push],[data-assets],[data-edit],[data-revert],[data-save],[data-cancel],[data-pickall],[data-dismiss],[data-openlog],[data-login],[data-quit],[data-page],[data-openproj],[data-removeproj],[data-pickfolder],[data-createproj],[data-addpath],[data-init],[data-shortcut],[data-savesettings],[data-resetsettings],[data-addapp],[data-delapp],[data-saverules],[data-copyprompt],[data-upgraderules],[data-sortinbox],[data-delimg]');
+  const t = e.target.closest('[data-app],[data-tab],[data-subtab],[data-run],[data-push],[data-assets],[data-edit],[data-revert],[data-save],[data-cancel],[data-pickall],[data-dismiss],[data-openlog],[data-login],[data-quit],[data-page],[data-openproj],[data-removeproj],[data-pickfolder],[data-createproj],[data-addpath],[data-init],[data-shortcut],[data-savesettings],[data-resetsettings],[data-addapp],[data-delapp],[data-saverules],[data-copyprompt],[data-upgraderules],[data-sortinbox],[data-delimg],[data-cellopen],[data-closemodal],[data-stop]');
   if (!t) return;
   const a = app();
   const d = t.dataset;
+  if (d.stop !== undefined) return;
+  if (d.cellopen) { openCell = d.cellopen; render(); return; }
+  if (d.closemodal !== undefined) { openCell = null; render(); return; }
   if (d.app) { cur = localStorage.appKey = d.app; page = 'app'; editing = null; render(); }
   else if (d.tab) { tab = localStorage.tab = d.tab; render(); }
   else if (d.subtab) { subtab = localStorage.subtab = d.subtab; render(); }
@@ -835,6 +865,7 @@ document.addEventListener('click', async (e) => {
     try { const r = await api('/api/images/sort', P({ app: cur })); sortMsg = r.lines; await load(); } catch (err) { alert(err.message); }
   } else if (d.delimg) {
     e.preventDefault();
+    openCell = null;
     const c = a.images.slots.flatMap((s) => Object.values(s.cells)).find((x) => x.key === d.delimg);
     run({ action: 'delete-images', only: [d.delimg] },
       `从 Steamworks 后台删除“${d.dellabel}”这张图？
@@ -1001,6 +1032,7 @@ async function dropImages(files, target) {
 }
 
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && openCell) { openCell = null; render(); return; }
   if (e.key !== 'Enter') return;
   if (e.target.id === 'newpath') $('[data-addpath]').click();
   if (e.target.id === 'new-appid' || e.target.id === 'new-name') $('[data-createproj]').click();
