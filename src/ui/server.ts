@@ -270,13 +270,13 @@ export async function startUi(o: UiOptions) {
 
       if (req.method !== 'POST') return json(res, 404, { error: 'not found' });
       if (url.pathname === '/api/images/drop') {
-        // 网页拖进来的图片，请求体是文件本身；不带 slot 就放进待分类，带 slot + lang 就直接放到那一格
+        // 网页拖进来的图片，请求体是文件本身；不带 cell 就放进待分类，带 cell（格子 key，例如 header|schinese）就直接放到那一格
         const { app } = appOf(q('project'), q('app'));
         if (job?.action === 'assets') return json(res, 409, { error: '正在上传图片，等它结束再放新图片' });
         const bytes = await readRaw(req, 50 * 1024 * 1024);
         const name = q('name') ?? '';
-        const slot = q('slot');
-        const line = slot ? placeImage(app, name, bytes, slot, q('lang') ?? '') : `已放进 ${addToInbox(app, name, bytes)}`;
+        const cell = q('cell');
+        const line = cell ? placeImage(app, name, bytes, cell) : `已放进 ${addToInbox(app, name, bytes)}`;
         touched();
         return json(res, 200, { line });
       }

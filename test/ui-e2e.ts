@@ -278,13 +278,13 @@ try {
   assert.ok(existsSync(join(AD, '待分类', '竖向_cn.png')), '抢同一个位置的留在待分类');
   rmSync(join(AD, '待分类', '竖向_cn.png'));
   // 拖到某一格：直接放到那个位置和语言，原来的挪到 已替换/
-  d = await drop({ name: 'new_vertical.png', slot: 'vertical_capsule', lang: 'schinese' }, png(748, 896, 5));
+  d = await drop({ name: 'new_vertical.png', cell: 'vertical_capsule|schinese' }, png(748, 896, 5));
   assert.match(d.line, /store\/schinese\/new_vertical\.png.*原来的 store\/schinese\/竖向_cn-2\.png 挪到 已替换/);
   assert.ok(existsSync(join(AD, '已替换', 'store', 'schinese', '竖向_cn-2.png')));
-  d = await drop({ name: 'x.png', slot: 'vertical_capsule', lang: 'schinese' }, png(920, 430));
+  d = await drop({ name: 'x.png', cell: 'vertical_capsule|schinese' }, png(920, 430));
   assert.equal(d.status, 500);
   assert.match(d.error, /920 x 430.*竖向宣传图要求 748 x 896/, '尺寸不对的格子拒绝');
-  assert.match((await drop({ name: 'x.png', slot: 'header', lang: 'japanese' }, png(920, 430))).error, /japanese/);
+  assert.match((await drop({ name: 'x.png', cell: 'header|japanese' }, png(920, 430))).error, /japanese/);
   assert.match((await drop({ name: 'evil.exe' }, Buffer.from('MZ'))).error, /只支持/);
   assert.equal((await drop({ name: '..\\..\\escape.png' }, png(920, 430))).line, '已放进 待分类/escape.png', '文件名里的路径被去掉');
   assert.equal((await drop({ name: 'a.png' }, png(920, 430), 'http://evil.example')).status, 403, '别的网页不能往这里放文件');

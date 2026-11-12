@@ -487,14 +487,14 @@ function imgCell(a, slot, lang, span) {
   const c = slot.cells[lang];
   const id = c.local && 'asset:' + c.local.rel;
   const pick = c.status === 'pending' ? `<input type="checkbox" data-pick="${esc(id)}" data-def="1" ${isPicked(id, true) ? 'checked' : ''} title="勾选后上传"> ` : '';
-  return `<td data-dropslot="${esc(slot.id + '|' + lang)}" data-droplabel="${esc(slot.label + (slot.localized ? '（' + langName(lang) + '）' : ''))}" ${span ? `colspan="${span}"` : ''}><div class="thumbs" ${span ? 'style="max-width:420px"' : ''}>
+  return `<td data-dropslot="${esc(c.key)}" data-droplabel="${esc(c.name)}" ${span ? `colspan="${span}"` : ''}><div class="thumbs" ${span ? 'style="max-width:420px"' : ''}>
       ${thumb('本地', c.local && localUrl(a, c.local.rel, c.local.bytes), '本地没有')}
       ${thumb('后台', c.remoteUrl, a.remoteAt ? '后台没有' : '还没读取<br>点“刷新后台状态”')}
     </div>
     <div class="cellfoot">${pick}<span class="pill ${CELL_PILL[c.status]}">${esc(c.text)}</span>
       ${c.local ? `<div class="fn">${esc(c.local.rel)}${c.local.size ? ' · ' + c.local.size : ''}${c.local.uploadedAt ? ' · 上传于 ' + new Date(c.local.uploadedAt).toLocaleString() : ''}</div>` : ''}
       ${c.extra.length ? `<div class="fn" style="color:var(--warn)">⚠ 同一位置还有：${c.extra.map(esc).join('、')}</div>` : ''}
-      ${c.remoteUrl ? `<div class="fn"><a href="#" data-delimg="${esc(slot.id + '|' + lang)}" data-dellabel="${esc(slot.label + (slot.localized ? '（' + langName(lang) + '）' : ''))}" class="delimg">从后台删除</a></div>` : ''}
+      ${c.remoteUrl ? `<div class="fn"><a href="#" data-delimg="${esc(c.key)}" data-dellabel="${esc(c.name)}" class="delimg">从后台删除</a></div>` : ''}
     </div></td>`;
 }
 
@@ -836,7 +836,7 @@ document.addEventListener('click', async (e) => {
     try { const r = await api('/api/images/sort', P({ app: cur })); sortMsg = r.lines; await load(); } catch (err) { alert(err.message); }
   } else if (d.delimg) {
     e.preventDefault();
-    const c = (() => { const [id, l] = d.delimg.split('|'); return a.images.slots.find((s) => s.id === id)?.cells[l]; })();
+    const c = a.images.slots.flatMap((s) => Object.values(s.cells)).find((x) => x.key === d.delimg);
     run({ action: 'delete-images', only: [d.delimg] },
       `从 Steamworks 后台删除“${d.dellabel}”这张图？
 
@@ -981,25 +981,24 @@ document.addEventListener('change', (e) => {
 
 async function dropImages(files, target) {
   if (!files.length) return;
-  const [slot, lang] = target ? target.split('|') : [];
-  if (slot && slot !== 'screenshot' && files.length > 1) { alert('一个位置只能放一张图片。要一次放多张，请拖到页面的空白处，按尺寸自动整理。'); return; }
+  if (target && !target.startsWith('screenshot|') && files.length > 1) { alert('一个位置只能放一张图片。要一次放多张，请拖到页面的空白处，按尺寸自动整理。'); return; }
   const lines = [];
   for (const f of files) {
-    const qs = new URLSearchParams({ project, app: cur, name: f.name, ...(slot ? { slot, lang } : {}) });
+    const qs = new URLSearchParams({ project, app: cur, name: f.name, ...(target ? { cell: target } : {}) });
     try {
       const r = await fetch('/api/images/drop?' + qs, { method: 'POST', body: f });
       const j = await r.json();
       lines.push(r.ok ? j.line : `✗ ${f.name}  ${j.error}`);
     } catch (err) { lines.push(`✗ ${f.name}  ${err.message}`); }
   }
-  if (!slot) {
+  if (!target) {
     // 放进待分类的只显示整理结果
     try { const r = await api('/api/images/sort', P({ app: cur })); sortMsg = [...lines.filter((l) => l.startsWith('✗')), ...r.lines]; }
     catch (err) { sortMsg = [...lines, '✗ 整理失败：' + err.message]; }
   } else sortMsg = lines;
   await load();
   // 拖到某一格时结果显示在页面顶部，出错时额外弹窗，免得看不到
-  if (slot && lines.some((l) => l.startsWith('✗'))) alert(lines.join('\n'));
+  if (target && lines.some((l) => l.startsWith('✗'))) alert(lines.join('\n'));
 }
 
 document.addEventListener('keydown', (e) => {

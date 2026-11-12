@@ -9,8 +9,8 @@ import { hasLocal, keepLanguages, readLocal, readSnapshot, splitLocalized, write
 import { localEdits, threeWay, type Change } from './sync.js';
 import { deleteAssets, openAssetsPage, uploadAssets } from './partner/assets.js';
 import { saveRemoteMeta } from './partner/meta.js';
-import { classify, remotePath, SLOTS } from './slots.js';
-import { imageSize } from './local/imageSize.js';
+import { remotePath, SLOTS } from './slots.js';
+import { cellName, filesIn, parseCell, remoteLang, scanCells, type Cell } from './local/imageCells.js';
 import { LANG_NAMES } from './fieldInfo.js';
 import { assetStates, readManifest, scanAssets, writeManifest } from './local/assetFiles.js';
 
@@ -184,43 +184,39 @@ export async function assetsApp(page: Page, c: Config, app: AppConfig, o: Assets
  */
 export async function deleteImagesApp(page: Page, c: Config, app: AppConfig, o: { targets: string[]; dryRun?: boolean }, log: Log) {
   let failed = false, pushed = false;
-  const todo = o.targets.map((t) => {
-    const [id, lang = '*'] = t.split('|');
-    return { t, slot: SLOTS.find((s) => s.id === id), lang };
-  });
-  for (const x of todo) {
-    if (!x.slot || x.slot.id === 'screenshot') { log(`  ✗ ${x.t}  不认识的位置（截图暂不支持删除）`, 'result'); failed = true; }
-    else if (x.slot.localized && !app.languages.includes(x.lang)) { log(`  ✗ ${x.t}  ${x.lang} 不在这个 App 的同步语言里`, 'result'); failed = true; }
+  const todo: Cell[] = [];
+  for (const t of o.targets) {
+    try {
+      const cell = parseCell(app, t);
+      if (cell.slot.tab === 'screenshot') throw new Error('截图暂不支持删除');
+      todo.push(cell);
+    } catch (e: any) { log(`  ✗ ${t}  ${e.message}`, 'result'); failed = true; }
   }
   if (failed) return { failed, pushed };
 
   await openAssetsPage(page, c, app);
-  const name = (x: (typeof todo)[number]) => `${x.slot!.label}${x.slot!.localized ? `（${LANG_NAMES[x.lang] ?? x.lang}）` : ''}`;
-  const results = await deleteAssets(page, c, app, todo.map((x) => ({ assetKey: x.slot!.assetKey, lang: x.slot!.localized ? x.lang : undefined })), !!o.dryRun);
+  const name = (x: Cell) => cellName(x, (l) => LANG_NAMES[l] ?? l);
+  const results = await deleteAssets(page, c, app, todo.map((x) => ({ assetKey: x.slot.assetKey, lang: x.slot.localized ? x.lang : undefined })), !!o.dryRun);
   const manifest = readManifest(c, app);
-  const { assets } = scanAssets(app);
+  const scan = scanCells(app);
   for (const [i, r] of results.entries()) {
-    const x = todo[i], slot = x.slot!;
+    const x = todo[i], slot = x.slot;
     if (!r.ok) { failed = true; log(`  ✗ 删除 ${name(x)}  ${r.error}${r.status ? ` (HTTP ${r.status})` : ''}`, 'result'); continue; }
     if (o.dryRun) { log(`  → 删除 ${name(x)}  会清空：${Object.keys(r.fields ?? {}).join('、')}`, 'result'); continue; }
     pushed = true;
-    const lang = slot.localized ? x.lang : 'english';
-    if (r.after && remotePath(r.after, slot, lang)) {
+    if (r.after && remotePath(r.after, slot, remoteLang(x))) {
       failed = true;
       log(`  ✗ 删除 ${name(x)}  后台返回成功，但重新读取后图片还在`, 'result');
       continue;
     }
-    const verified = r.before && r.after && remotePath(r.before, slot, lang) ? '（已核对）' : '';
+    const verified = r.before && r.after && remotePath(r.before, slot, remoteLang(x)) ? '（已核对）' : '';
     log(`  ✓ 已删除 ${name(x)}${verified}`, 'result');
     log(`      后台位置：${slot.where}${slot.localized ? ' → ' + x.lang : ''}`, 'result');
-    // 同一位置的本地图片：清掉上传记录，网页上会变成“待上传”
-    for (const a of assets) {
-      const dim = imageSize(a.bytes);
-      const s = dim && classify(a.tab, dim.width, dim.height);
-      if (s?.id === slot.id && (!slot.localized || a.lang === x.lang) && manifest[a.rel]) {
-        delete manifest[a.rel];
-        log(`      本地文件 ${a.rel} 没有删除，下次上传会再传上去；不需要的话请把它删掉`, 'result');
-      }
+    // 同一格的本地图片：清掉上传记录，网页上会变成“待上传”
+    for (const f of filesIn(scan, x)) {
+      if (!manifest[f.rel]) continue;
+      delete manifest[f.rel];
+      log(`      本地文件 ${f.rel} 没有删除，下次上传会再传上去；不需要的话请把它删掉`, 'result');
     }
   }
   if (!o.dryRun && pushed) {

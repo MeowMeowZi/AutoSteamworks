@@ -2,11 +2,11 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AppConfig, Config } from '../config.js';
-import { assetStates, readManifest, scanAssets, type AssetState } from '../local/assetFiles.js';
-import { imageSize } from '../local/imageSize.js';
+import { assetState, readManifest, type AssetState, type LocalAsset } from '../local/assetFiles.js';
+import { ANY_LANG, cellKey, cellName, cellOf, filesIn, remoteLang, scanCells } from '../local/imageCells.js';
 import { INBOX, planInbox } from '../local/inbox.js';
 import type { RemoteMeta } from '../partner/meta.js';
-import { classify, remotePath, remoteScreenshotCount, sizesFor, SLOTS, type Slot } from '../slots.js';
+import { remotePath, remoteScreenshotCount, SLOTS, type Slot } from '../slots.js';
 import { LANG_NAMES } from '../fieldInfo.js';
 
 export type CellStatus = 'pending' | 'synced' | 'uploaded' | 'lost' | 'remote-only' | 'missing-required' | 'fallback' | 'empty';
@@ -14,6 +14,10 @@ export type CellStatus = 'pending' | 'synced' | 'uploaded' | 'lost' | 'remote-on
 export interface LocalImage { rel: string; state: AssetState; bytes: number; size?: string; uploadedAt?: string }
 
 export interface Cell {
+  /** 格子的 key，例如 "header|schinese"（见 local/imageCells.ts）；网页拖拽、删除都用它 */
+  key: string;
+  /** 给人看的位置名，例如 “形象图片（简体中文）” */
+  name: string;
   status: CellStatus;
   /** 给人看的一句话 */
   text: string;
@@ -44,33 +48,23 @@ const STATUS_TEXT: Record<CellStatus, string> = {
 export function imageBoard(c: Config, app: AppConfig, meta: RemoteMeta | undefined) {
   // 旧项目没有收件箱：打开网页时顺手建好，用户能直接往里丢图片
   mkdirSync(join(app.assets.dir, INBOX), { recursive: true });
-  const { assets, warnings } = scanAssets(app);
+  const scan = scanCells(app);
   const manifest = readManifest(c, app);
   const cdn = meta?.cdnBase ?? `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${app.appid}/`;
-  const issues: Issue[] = warnings.map((msg) => ({ level: 'warn', msg }));
-  const unmatched: (LocalImage & { reason: string })[] = [];
-  const screenshots: LocalImage[] = [];
-  const byCell = new Map<string, LocalImage[]>();
+  const issues: Issue[] = scan.warnings.map((msg) => ({ level: 'warn', msg }));
+  const image = (a: LocalAsset & { size?: string }): LocalImage => ({
+    rel: a.rel, state: assetState(a, manifest), bytes: a.bytes.length, size: a.size, uploadedAt: manifest[a.rel]?.uploadedAt,
+  });
+  const unmatched = scan.unmatched.map((u) => ({ ...image(u), reason: u.reason }));
+  const screenshots = scan.screenshots.map(image);
 
-  for (const { asset, state } of assetStates(assets, manifest)) {
-    const dim = imageSize(asset.bytes);
-    const img: LocalImage = {
-      rel: asset.rel, state, bytes: asset.bytes.length, size: dim && `${dim.width}x${dim.height}`, uploadedAt: manifest[asset.rel]?.uploadedAt,
-    };
-    if (!dim) { unmatched.push({ ...img, reason: '读不出图片尺寸（文件损坏或格式不支持）' }); continue; }
-    const slot = classify(asset.tab, dim.width, dim.height);
-    if (!slot) { unmatched.push({ ...img, reason: `尺寸 ${img.size} 对不上任何类型。可用：${sizesFor(asset.tab)}` }); continue; }
-    if (slot.id === 'screenshot') { screenshots.push(img); continue; }
-    const k = `${slot.id}|${slot.localized ? asset.lang : '*'}`;
-    byCell.set(k, [...(byCell.get(k) ?? []), img]);
-  }
-
-  const slots: SlotRow[] = SLOTS.filter((s) => s.id !== 'screenshot').map((slot) => {
-    const langs = slot.localized ? app.languages : ['*'];
+  const slots: SlotRow[] = SLOTS.filter((s) => s.tab !== 'screenshot').map((slot) => {
+    const langs = slot.localized ? app.languages : [ANY_LANG];
     const cells: Record<string, Cell> = {};
     for (const lang of langs) {
-      const [local, ...more] = byCell.get(`${slot.id}|${lang}`) ?? [];
-      const path = remotePath(meta?.assets, slot, lang === '*' ? 'english' : lang);
+      const cell = cellOf(slot, lang);
+      const [local, ...more] = filesIn(scan, cell).map(image);
+      const path = remotePath(meta?.assets, slot, remoteLang(cell));
       let status: CellStatus;
       if (local) {
         status = local.state !== 'same' ? 'pending' : !meta ? 'uploaded' : path ? 'synced' : 'lost';
@@ -84,8 +78,8 @@ export function imageBoard(c: Config, app: AppConfig, meta: RemoteMeta | undefin
       let text = STATUS_TEXT[status];
       if (local && local.state === 'changed') text = '本地改过，待上传（会替换后台的图）';
       if (local && local.state === 'new' && path) text = '待上传（会替换后台现在的图）';
-      cells[lang] = { status, text, local, extra: more.map((m) => m.rel), remoteUrl: path ? cdn + path : undefined };
-      if (more.length) issues.push({ level: 'warn', msg: `${slot.label}（${LANG_NAMES[lang] ?? lang}）有 ${more.length + 1} 张本地图片：${[local!.rel, ...more.map((m) => m.rel)].join('、')}。后台每个位置只能放一张，只保留一张。` });
+      cells[lang] = { key: cellKey(cell), name: cellName(cell, (l) => LANG_NAMES[l] ?? l), status, text, local, extra: more.map((m) => m.rel), remoteUrl: path ? cdn + path : undefined };
+      if (more.length) issues.push({ level: 'warn', msg: `${cells[lang].name} 有 ${more.length + 1} 张本地图片：${[local!.rel, ...more.map((m) => m.rel)].join('、')}。后台每个位置只能放一张，只保留一张。` });
     }
     return { ...slot, cells };
   });

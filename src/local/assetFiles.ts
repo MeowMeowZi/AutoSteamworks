@@ -65,6 +65,8 @@ export function writeManifest(cfg: Config, app: AppConfig, m: AssetManifest) {
 
 export type AssetState = 'new' | 'changed' | 'same';
 
+export const assetState = (a: LocalAsset, m: AssetManifest): AssetState => (!m[a.rel] ? 'new' : m[a.rel].hash === a.hash ? 'same' : 'changed');
+
 export function assetStates(assets: LocalAsset[], m: AssetManifest) {
-  return assets.map((a) => ({ asset: a, state: (!m[a.rel] ? 'new' : m[a.rel].hash === a.hash ? 'same' : 'changed') as AssetState }));
+  return assets.map((a) => ({ asset: a, state: assetState(a, m) }));
 }

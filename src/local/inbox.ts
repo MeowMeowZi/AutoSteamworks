@@ -5,8 +5,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { basename, dirname, extname, join, relative } from 'node:path';
 import type { AppConfig } from '../config.js';
 import { ASSET_EXTS } from '../partner/assets.js';
-import { classify, sizesFor, SLOTS, type Slot } from '../slots.js';
-import { scanAssets } from './assetFiles.js';
+import { classify, sizesFor, type Slot } from '../slots.js';
+import { cellDir, cellKey, cellName, cellOf, defaultLang, filesIn, parseCell, scanCells } from './imageCells.js';
 import { STEAM_LANGS } from './storeFiles.js';
 import { imageSize } from './imageSize.js';
 
@@ -94,16 +94,9 @@ export function planInbox(app: AppConfig): InboxItem[] {
   const files = walk(inbox);
   if (!files.length) return [];
 
-  // 现有图片所在的位置，用来找“会被替换的旧图”
-  const occupied = new Map<string, string[]>();
-  for (const a of scanAssets(app).assets) {
-    const d = imageSize(a.bytes);
-    const slot = d && classify(a.tab, d.width, d.height);
-    if (!slot || slot.id === 'screenshot') continue;
-    const k = slot.id + '|' + (slot.localized ? a.lang : '*');
-    occupied.set(k, [...(occupied.get(k) ?? []), a.rel]);
-  }
-  const fallback = app.languages.includes('english') ? 'english' : app.languages[0];
+  // 现有图片所在的格子，用来找“会被替换的旧图”
+  const scan = scanCells(app);
+  const fallback = defaultLang(app);
   const taken = new Map<string, string>();
   const targets = new Set<string>();
 
@@ -124,22 +117,22 @@ export function planInbox(app: AppConfig): InboxItem[] {
       return { ...item, reason: `文件名表示语言是 ${lang}，但这个 App 只同步 ${app.languages.join('、')}。先在“设置”里加上这种语言` };
     }
 
-    // 不分语言的位置（页面背景）统一放到默认语言目录
-    const dir = slot.tab === 'screenshot' ? 'screenshots' : `${slot.tab}/${slot.localized ? lang : fallback}`;
+    const cell = cellOf(slot, lang);
+    const dir = cellDir(app, cell);
     item.slot = slot.label;
     if (slot.tab !== 'screenshot') item.lang = slot.localized ? lang : undefined;
 
     // 目标位置已经有一模一样的文件：只删待分类里的副本
     const hash = sha(p);
-    const same = (slot.tab === 'screenshot' ? walk(join(root, 'screenshots')) : walk(join(root, dir))).find((q) => sha(q) === hash);
+    const same = walk(join(root, dir)).find((q) => sha(q) === hash);
     if (same) return { ...item, to: rel(root, same), duplicate: true };
 
     if (slot.tab !== 'screenshot') {
-      const k = slot.id + '|' + (slot.localized ? lang : '*');
+      const k = cellKey(cell);
       const prev = taken.get(k);
       if (prev) return { ...item, reason: `和 ${prev} 是同一个位置（${slot.label}${item.lang ? ' · ' + item.lang : ''}），一个位置只能放一张` };
       taken.set(k, from);
-      item.replaces = occupied.get(k) ?? [];
+      item.replaces = filesIn(scan, cell).map((f) => f.rel);
     }
 
     // 重名时加序号，避免覆盖已有的文件
@@ -218,21 +211,18 @@ export function addToInbox(app: AppConfig, name: string, bytes: Buffer): string 
  * 网页拖拽到表格里的某一格：直接放到这个位置和语言，尺寸必须对得上。
  * 这一格原来的本地图片挪到 已替换/；截图是追加，不替换。返回结果说明
  */
-export function placeImage(app: AppConfig, name: string, bytes: Buffer, slotId: string, lang: string): string {
+export function placeImage(app: AppConfig, name: string, bytes: Buffer, key: string): string {
   const root = app.assets.dir;
   const file = safeName(name);
-  const slot = SLOTS.find((s) => s.id === slotId);
-  if (!slot) throw new Error(`不认识的位置：${slotId}`);
-  const fallback = app.languages.includes('english') ? 'english' : app.languages[0];
-  if (slot.localized && !app.languages.includes(lang)) throw new Error(`${lang} 不在这个 App 的同步语言里`);
+  const cell = parseCell(app, key), slot = cell.slot;
   const d = imageSize(bytes);
   if (!d) throw new Error(`${file}：读不出图片尺寸（文件损坏或格式不支持）`);
   if (classify(slot.tab, d.width, d.height)?.id !== slot.id) {
     const need = slot.match === 'min' ? `至少 ${slot.width} x ${slot.height}` : slot.match === 'contained' ? `宽 ${slot.width} 或高 ${slot.height}` : `${slot.width} x ${slot.height}`;
     throw new Error(`${file} 是 ${d.width} x ${d.height}，${slot.label}要求 ${need}`);
   }
-  const where = `${slot.label}${slot.localized ? `（${lang}）` : ''}`;
-  const dir = slot.tab === 'screenshot' ? 'screenshots' : `${slot.tab}/${slot.localized ? lang : fallback}`;
+  const where = cellName(cell);
+  const dir = cellDir(app, cell);
 
   // 和这一格已有的图完全一样：什么都不做
   const hash = createHash('sha256').update(bytes).digest('hex');
@@ -241,11 +231,7 @@ export function placeImage(app: AppConfig, name: string, bytes: Buffer, slotId: 
 
   const replaced: string[] = [];
   if (slot.tab !== 'screenshot') {
-    for (const a of scanAssets(app).assets) {
-      if (a.tab !== slot.tab || (slot.localized && a.lang !== lang)) continue;
-      const ad = imageSize(a.bytes);
-      if (ad && classify(a.tab, ad.width, ad.height)?.id === slot.id) { moveToReplaced(root, a.rel); replaced.push(a.rel); }
-    }
+    for (const f of filesIn(scanCells(app), cell)) { moveToReplaced(root, f.rel); replaced.push(f.rel); }
   }
   const to = freeName(root, dir, file);
   mkdirSync(dirname(join(root, to)), { recursive: true });
