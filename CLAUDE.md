@@ -82,7 +82,7 @@ src/ui/page.html           网页，原生 JS，不需要构建。概览（本�
 src/ui/images.ts           图片表的数据：每格的本地文件、后台路径、状态（待上传 / 已在后台 / 缺少必填…）
 src/slots.ts               后台图片槽位表（照抄 g_ImageTypes）和按尺寸识别（照抄 IsImageTypeValid）
 src/fieldInfo.ts           字段名 → 后台页签 / 分组 / 中文名
-src/partner/meta.ts        后台状态快照（serialized_app_data.assets、CDN 前缀、复选框文字），pull/diff/push/assets 时保存到 .autosw/remote/
+src/partner/meta.ts        后台状态快照（serialized_app_data.assets、CDN 前缀、复选框文字），保存到 .autosw/remote/。只由 store.ts 的 openEditPage 抓取：每次打开编辑页都抓，上传 / 删除图片后 adapter 自己再打开一次页面；ops 不用管快照
 src/local/imageSize.ts     离线读 PNG/JPEG/GIF/WebP 尺寸
 templates/STEAM_RULES.md   `init` 复制到游戏项目里，给 AI 看的规则。“## 本项目的风格”这个标题是升级时的分界线，不要改名
 src/sync.ts                三方对比（本地 / 线上 / 快照）：local / remote / conflict / gone
