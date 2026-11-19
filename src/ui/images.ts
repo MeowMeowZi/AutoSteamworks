@@ -49,10 +49,9 @@ const STATUS_TEXT: Record<CellStatus, string> = {
   empty: '未设置',
 };
 
-export function imageBoard(c: Config, app: AppConfig, meta: RemoteMeta | undefined) {
+export function imageBoard(c: Config, app: AppConfig, meta: RemoteMeta | undefined, scan = scanCells(app)) {
   // 旧项目没有收件箱：打开网页时顺手建好，用户能直接往里丢图片
   mkdirSync(join(app.assets.dir, INBOX), { recursive: true });
-  const scan = scanCells(app);
   const parentName = app.inherits ? `正式版（${app.inherits.key}）` : '';
   const manifest = readManifest(c, app);
   const cdn = meta?.cdnBase ?? `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${app.appid}/`;
@@ -99,7 +98,9 @@ export function imageBoard(c: Config, app: AppConfig, meta: RemoteMeta | undefin
   return {
     cdnKnown: !!meta?.cdnBase,
     slots,
-    screenshots: { local: screenshots, remoteCount: remoteScreenshotCount(meta?.assets), where: SLOTS.find((s) => s.id === 'screenshot')!.where },
+    screenshots: { local: screenshots, remoteCount: remoteScreenshotCount(meta?.assets),
+      gameplayCount: meta ? Object.values(meta.assets.screenshots ?? {}).filter((s: any) => s?.category === 'gameplay').length : undefined,
+      where: SLOTS.find((s) => s.id === 'screenshot')!.where },
     unmatched,
     issues,
     /** 待分类里的图片和各自会去的位置 */

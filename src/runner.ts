@@ -5,6 +5,9 @@ import { NotLoggedInError, openBrowser } from './browser.js';
 import type { Change } from './sync.js';
 import { findDemos, type DemoCandidate } from './partner/demos.js';
 import { readSnapshot } from './local/storeFiles.js';
+import { draftItems } from './local/draftSettings.js';
+import { readManifest, writeManifest } from './local/assetFiles.js';
+import { applyDraftSetting } from './partner/draftSettings.js';
 import { assetsApp, deleteImagesApp, diffApp, DRAFT_NOTE, loginFlow, printChange, pullApp, pushApp, type Log } from './ops.js';
 
 interface Common {
@@ -21,7 +24,7 @@ export type RunRequest = Common & (
   | { action: 'diff' }
   | { action: 'push'; dryRun?: boolean; force?: boolean; /** 只推送这些字段 */ only?: string[] }
   | { action: 'assets'; dryRun?: boolean; force?: boolean; /** 只上传这些图片（相对 assets 目录） */ only?: string[] }
-  | { action: 'upload'; fields: string[]; images: string[]; overwriteConflicts?: string[]; dryRun?: boolean }
+  | { action: 'upload'; fields: string[]; images: string[]; settings?: string[]; overwriteConflicts?: string[]; dryRun?: boolean }
   | { action: 'delete-images'; dryRun?: boolean; /** "<槽位 id>|<语言>" */ targets: string[] }
   | { action: 'login' }
   /** 搜正式版的 Demo（apps 里只放正式版）。term 是名称或 Demo 的 appid，不写就用正式版的名称 */
@@ -80,6 +83,9 @@ export async function runOperation(req: RunRequest, log: Log): Promise<RunResult
   const c = loadConfig(req.configPath);
   const apps = selectApps(c, req.apps ?? []);
   const dry = 'dryRun' in req && req.dryRun ? '（演练）' : '';
+  if (req.action === 'upload' || req.action === 'push' || req.action === 'assets') {
+    log(`正在启动浏览器，准备${ACTION_NAMES[req.action]}${dry}…`);
+  }
   const { ctx, page } = await openBrowser(c, !req.headed);
   try {
     if (req.action === 'find-demos') {
@@ -106,6 +112,9 @@ export async function runOperation(req: RunRequest, log: Log): Promise<RunResult
             break;
           }
           case 'upload': {
+            const selected = new Set(req.settings);
+            const settings = selected.size ? draftItems(app).filter(item => selected.has(item.id)) : [];
+            if (settings.length !== selected.size) throw new Error('所选后台设置已变化，请刷新后再预览');
             if (req.fields.length) {
               const text = await pushApp(page, c, app, { only: req.fields, overwriteConflicts: req.overwriteConflicts, dryRun: req.dryRun }, log);
               r.ok = !text.failed;
@@ -115,6 +124,22 @@ export async function runOperation(req: RunRequest, log: Log): Promise<RunResult
               const images = await assetsApp(page, c, app, { only: req.images, pendingOnly: true, dryRun: req.dryRun }, log);
               r.ok &&= !images.failed;
               result.changedRemote ||= images.pushed;
+            }
+            for (const item of settings) {
+              if (req.dryRun) { log(`  → ${item.label}\n    ${item.preview}`, 'result'); continue; }
+              log(`  正在核对并保存${item.label}…`);
+              try {
+                const changed = await applyDraftSetting(page, c, app, item.value);
+                result.changedRemote ||= changed;
+                const manifest = readManifest(c, app);
+                manifest[item.id] = { hash: item.hash, type: item.label, uploadedAt: new Date().toISOString() };
+                writeManifest(c, app, manifest);
+                log(`  ✓ ${item.label}：${changed ? '已保存并核对' : '后台已有相同设置'}`, 'result');
+              } catch (e) {
+                if (e instanceof NotLoggedInError) throw e;
+                r.ok = false;
+                log(`  ✗ ${item.label}：${e instanceof Error ? e.message : e}`, 'result');
+              }
             }
             break;
           }
@@ -142,7 +167,9 @@ export async function runOperation(req: RunRequest, log: Log): Promise<RunResult
     await ctx.close().catch(() => {});
   }
   result.ok = result.apps.every((a) => a.ok);
-  if (result.changedRemote) log(DRAFT_NOTE, 'result');
+  if (result.changedRemote) log(req.action === 'upload' && req.settings?.length
+    ? '已保存的项目见上方核对结果。可在 Steamworks 对应的内容调查、商店页或客户端图片页复核。'
+    : DRAFT_NOTE, 'result');
   return result;
 }
 

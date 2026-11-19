@@ -8,7 +8,7 @@ import { runOperation, type Action, type DemoSearch, type RunRequest, type RunRe
 export interface RunReq {
   project: string; action: Action; app: string; only?: string[]; dryRun?: boolean; force?: boolean;
   /** 一键上传时勾选的字段、图片和允许覆盖的冲突字段 */
-  fields?: string[]; images?: string[]; overwriteConflicts?: string[];
+  fields?: string[]; images?: string[]; settings?: string[]; overwriteConflicts?: string[];
   /** find-demos 的搜索词 */
   term?: string;
 }
@@ -19,6 +19,7 @@ export interface Job { action: Action; project: string; app: string }
 export interface LastResult {
   project: string; app: string; action: Action; dryRun: boolean;
   ok: boolean; changedRemote: boolean; needLogin: boolean; at: string; lines: string[];
+  includesSettings?: boolean;
   /** find-demos 搜到的 Demo，网页在结果框里列出来让用户选 */
   demos?: DemoSearch;
 }
@@ -50,7 +51,7 @@ export function createJobs({ notify, runOp = runOperation }: JobsOptions) {
     const common = { configPath, apps: app ? [app] : [] };
     if (req.action === 'upload') return {
       ...common, action: 'upload', fields: req.fields ?? [], images: req.images ?? [],
-      overwriteConflicts: req.overwriteConflicts, dryRun: req.dryRun,
+      settings: req.settings, overwriteConflicts: req.overwriteConflicts, dryRun: req.dryRun,
     };
     return req.action === 'delete-images' ? { ...common, action: req.action, targets: req.only ?? [], dryRun: req.dryRun }
       : req.action === 'push' || req.action === 'assets' ? { ...common, action: req.action, dryRun: req.dryRun, force: req.force, only: req.only }
@@ -83,6 +84,7 @@ export function createJobs({ notify, runOp = runOperation }: JobsOptions) {
       last = {
         project, app, action: req.action, dryRun: !!req.dryRun, ok: r.ok, at: new Date().toISOString(),
         changedRemote: r.changedRemote, needLogin: r.needLogin, lines, demos: r.demos,
+        includesSettings: req.action === 'upload' && !!req.settings?.length,
       };
       job = undefined;
       notify('done', { ok: r.ok });

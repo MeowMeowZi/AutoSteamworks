@@ -12,7 +12,9 @@ import YAML from 'yaml';
 import { startUi } from '../src/ui/server.js';
 
 const run = promisify(execFile);
-const srv = await start();
+let finishLibraryUpload!: () => void;
+const libraryUpload = new Promise<void>((resolve) => { finishLibraryUpload = resolve; });
+const srv = await start(0, (filename) => filename === 'library_header.png' ? libraryUpload : undefined);
 const ws = mkdtempSync(join(tmpdir(), 'autosw-ui-'));
 process.env.AUTOSW_HOME = join(ws, 'home'); // 项目列表放临时目录，不碰真实的 ~/.autosteamworks
 const cfgFile = join(ws, 'steam.config.yaml');
@@ -165,12 +167,18 @@ try {
 
   let a = await game();
   assert.equal(a.pulled, false);
+  const defaults = { developer: '工作室', publisher: '默认发行商' };
+  assert.deepEqual(await get('/api/global-settings'), { developer: '', publisher: '' });
+  assert.equal((await rawPost('/api/global-settings', { ...defaults, developer: ' 工作室 ' })).status, 200);
+  assert.deepEqual(await get('/api/global-settings'), defaults);
+
   // 网页上拉取
   await runJob({ action: 'pull' });
   a = await game();
   assert.equal(a.pulled, true);
   const devKey = 'app[game][developers][0][name]';
-  assert.equal((await post('/api/field', { app: 'game', key: devKey, value: '测试署名' })).status, 200);
+  const dev = a.common.find((item: any) => item.key === devKey);
+  assert.deepEqual([dev.local, dev.base, dev.edited, remote()[devKey]], ['工作室', '', true, '']);
   assert.equal(a.common.find((item: any) => item.key === 'app[game][publishers][0]').local, '已有发行商');
   assert.equal(field(a, 'english', 'about').local, 'Old about\n[b]bold[/b]');
   assert.equal(field(a, 'english', 'about').edited, false);
@@ -306,6 +314,7 @@ try {
   assert.equal(img.headers.get('content-type'), 'image/png');
 
   // 从两个页签分别勾选，预览和一次确认都使用同一份清单。
+  put('library/english/library_header.png', png(920, 430));
   const shortKey = 'app[content][short_description][english]';
   const browser = await chromium.launch({ channel: 'msedge' });
   try {
@@ -313,13 +322,14 @@ try {
     await page.goto(ui.url);
     const bar = page.locator('#actionbar');
     await bar.waitFor();
-    assert.match(await bar.innerText(), /处文本、2 张图片/);
+    assert.match(await bar.innerText(), /处文本、3 张图片/);
     await bar.getByText('全不选').click();
     assert.ok(await bar.getByRole('button', { name: '一键上传到后台草稿' }).isDisabled());
     await page.locator(`[data-pick="${shortKey}"]`).check();
     await page.locator('button[data-tab="images"]').click();
     await page.locator('[data-pick="asset:store/english/small.png"]').check();
-    assert.match(await bar.innerText(), /1 处文本、1 张图片/);
+    await page.locator('[data-pick="asset:library/english/library_header.png"]').check();
+    assert.match(await bar.innerText(), /1 处文本、2 张图片/);
     await bar.getByRole('button', { name: '预览将要上传的内容' }).click();
     await page.locator('.result.dry').waitFor();
     const preview = await page.locator('.result.dry').innerText();
@@ -331,15 +341,26 @@ try {
     const confirmations: string[] = [];
     page.on('dialog', async (dialog) => { confirmations.push(dialog.message()); await dialog.accept(); });
     await bar.getByRole('button', { name: '一键上传到后台草稿' }).click();
+    const liveLog = page.locator('body.logopen #log');
+    await liveLog.filter({ hasText: '正在提交 1 个字段到后台草稿' }).waitFor();
+    const inFlight = liveLog.filter({ hasText: '[2/2] 正在上传 library/english/library_header.png' });
+    await inFlight.waitFor();
+    assert.match(await inFlight.innerText(), /正在提交 1 个字段.*正在重新读取草稿并核对字段值.*✓ 已保存 1 个字段.*\[1\/2\] 正在上传.*✓ store\/english\/small\.png.*（已核对）.*\[2\/2\] 正在上传/s);
+    assert.deepEqual(srv.uploads.map((u) => u.filename), ['small.png'], '最后一张还在上传时，已能看到前一张的核对结果');
+    await page.reload();
+    await inFlight.waitFor();
+    assert.match(await inFlight.innerText(), /✓ store\/english\/small\.png/, '推送中刷新页面也能看到已完成的图片');
+    finishLibraryUpload();
     await page.locator('.result.ok').getByText('上传到后台草稿完成').waitFor();
     assert.equal(confirmations.length, 1);
-    assert.match(confirmations[0], /1 处文本、1 张图片/);
+    assert.match(confirmations[0], /1 处文本、2 张图片/);
     assert.equal(remote()[shortKey], 'Lazy god idles.');
     assert.equal(remote()[devKey], '', '没勾选的文本继续留在本地');
   } finally {
+    finishLibraryUpload();
     await browser.close();
   }
-  assert.deepEqual(srv.uploads.map((u) => u.filename), ['small.png']);
+  assert.deepEqual(srv.uploads.map((u) => u.filename), ['small.png', 'library_header.png']);
   a = await game();
   assert.equal(cell(a, 'small_capsule', 'english').status, 'synced', '上传后自动读取后台状态并核对');
   assert.match(cell(a, 'small_capsule', 'english').remoteUrl, /h1\/small\.png$/);

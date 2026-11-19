@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { existsSync, readFileSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import { loadConfig, readSettings, selectApps, writeSettings, type AppConfig, type Config } from '../config.js';
+import { readGlobalSettings, writeGlobalSettings } from '../globalSettings.js';
 import { clearOverride, readLocal, STEAM_LANGS, writeLocalField } from '../local/storeFiles.js';
 import { addDemo } from '../demo.js';
 import { STANDALONE_DEMO } from '../ops.js';
@@ -13,6 +14,8 @@ import { createWatch } from './watch.js';
 import { readMeta } from '../partner/meta.js';
 import { LANG_NAMES } from '../fieldInfo.js';
 import { imageBoard } from './images.js';
+import { draftRows } from '../local/draftSettings.js';
+import { scanCells } from '../local/imageCells.js';
 import { addToInbox, describeItem, placeImage, restoreInherited, sortInbox } from '../local/inbox.js';
 import { addProject, createProjectByAppid, projectsRoot, listProjects, projectSummary, removeProject, requireProject } from '../projects.js';
 import { initProject } from '../projectInit.js';
@@ -40,7 +43,11 @@ export async function startUi(o: UiOptions) {
     const remote = jobs.remoteCheck(project, app.key);
     const meta = readMeta(c, app);
     const view = textView(text, remote?.changes, meta?.labels);
-    const images = imageBoard(c, app, meta);
+    const scan = scanCells(app);
+    const images = imageBoard(c, app, meta, scan);
+    let settings: ReturnType<typeof draftRows> = [];
+    try { settings = draftRows(c, app, meta, scan.screenshots); }
+    catch (e) { images.issues.push({ level: 'error', msg: '后台设置：' + (e instanceof Error ? e.message : e) }); }
     const count = (level: 'error' | 'warn') => text.issues.filter((i) => i.level === level).length + images.issues.filter((i) => i.level === level).length;
     const standalone = text.local[STANDALONE_DEMO];
     return {
@@ -54,7 +61,7 @@ export async function startUi(o: UiOptions) {
       storeDir: app.storeDir, assetsDir: app.assets.dir,
       common: view.common,
       localized: view.localized,
-      images,
+      images, settings,
       /** 上次从后台读到状态的时间（拉取、对比、上传时都会更新） */
       remoteAt: meta?.at,
       summary: { textEdits: text.edits.length, imagesPending: images.pending.length, errors: count('error'), warnings: count('warn') },
@@ -131,7 +138,7 @@ export async function startUi(o: UiOptions) {
         case 'GET /api/state':
           return json(res, 200, state(q('project')));
         case 'GET /api/events':
-          watch.attach(res);
+          watch.attach(res, req.headers['last-event-id']?.toString());
           return;
         case 'GET /api/asset': {
           // rel 相对 App 的 assets 目录；Demo 继承来的图在正式版的 assets 目录里（../../game/assets/...）
@@ -143,6 +150,8 @@ export async function startUi(o: UiOptions) {
           res.writeHead(200, { 'content-type': mime[extname(p).toLowerCase()] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
           return res.end(readFileSync(p));
         }
+        case 'GET /api/global-settings':
+          return json(res, 200, readGlobalSettings());
         case 'GET /api/settings':
           return json(res, 200, readSettings(requireProject(q('project'))));
         case 'GET /api/rules':
@@ -186,6 +195,8 @@ export async function startUi(o: UiOptions) {
           touched();
           return json(res, 200, { made });
         }
+        case '/api/global-settings':
+          return json(res, 200, writeGlobalSettings(b));
         case '/api/settings':
           writeSettings(requireProject(b.project), b.settings);
           touched();
@@ -243,10 +254,10 @@ export async function startUi(o: UiOptions) {
           if (busy) return json(res, 409, { error: `正在执行 ${busy.action}，请等它结束` });
           if (r.action === 'upload') {
             const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === 'string' && s.length > 0);
-            if (!strings(r.fields) || !strings(r.images) || (r.overwriteConflicts !== undefined && !strings(r.overwriteConflicts))) {
+            if (!strings(r.fields) || !strings(r.images) || (r.settings !== undefined && !strings(r.settings)) || (r.overwriteConflicts !== undefined && !strings(r.overwriteConflicts))) {
               return json(res, 400, { error: '上传清单格式有误，请刷新后重试' });
             }
-            if (!r.fields.length && !r.images.length) return json(res, 400, { error: '请先勾选要上传的改动' });
+            if (!r.fields.length && !r.images.length && !r.settings?.length) return json(res, 400, { error: '请先勾选要上传的改动' });
           }
           if (r.action !== 'login') appOf(r.project, r.app); // 先校验项目和 App
           else if (r.project) requireProject(r.project);

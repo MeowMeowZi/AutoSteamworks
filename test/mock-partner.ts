@@ -122,7 +122,7 @@ function page(id: string) {
   </script></body></html>`;
 }
 
-export function start(port = 0) {
+export function start(port = 0, beforeUpload?: (filename: string) => Promise<void> | void) {
   const srv = createServer(async (req, res) => {
     const url = new URL(req.url!, 'http://x');
     // 没登录时真实后台会跳回首页并带上 ?goto=。appid 999 模拟这种情况
@@ -150,6 +150,7 @@ export function start(port = 0) {
         let rejected = false;
         for (const [key, v] of form) {
           if (typeof v === 'string') continue;
+          await beforeUpload?.(v.name);
           const bytes = Buffer.from(await v.arrayBuffer());
           // 文件名带 reject 的：模拟后台拒收，不记录、不改数据
           if (v.name.includes('reject')) { rejected = true; continue; }

@@ -227,6 +227,7 @@ const ACTION = { pull: '从后台拉取', diff: '刷新后台状态', push: '上
 const CELL_PILL = { pending: 'info', synced: 'ok', uploaded: 'ok', lost: 'err', 'remote-only': '', 'missing-required': 'err', fallback: '', empty: '' };
 
 let S = null;
+let lastJobEvent;
 let project = localStorage.project || '';   // 当前项目（配置文件路径）
 let page = 'app';                            // app | projects | settings | rules
 let cur = localStorage.appKey || null;
@@ -246,20 +247,23 @@ async function api(path, body) {
 const P = (body) => ({ project, ...body });
 let firstLoad = true;
 async function load() {
+  const jobEventAtStart = lastJobEvent;
   // 从快捷方式或命令行带过来的项目：?open=<路径>
   const open = new URLSearchParams(location.search).get('open');
   if (open) {
     try { project = (await api('/api/projects/add', { path: open })).config; } catch (e) { alert(e.message); }
     history.replaceState(null, '', '/');
   }
-  S = await api('/api/state');
-  const known = (p) => S.projects.some((x) => x.config === p);
-  if (!known(project)) project = (firstLoad && S.openProject) || S.projects[0]?.config || '';
-  if (firstLoad && S.openProject && !open && !localStorage.project) project = S.openProject;
+  const state = await api('/api/state');
+  const known = (p) => state.projects.some((x) => x.config === p);
+  if (!known(project)) project = (firstLoad && state.openProject) || state.projects[0]?.config || '';
+  if (firstLoad && state.openProject && !open && !localStorage.project) project = state.openProject;
   firstLoad = false;
   localStorage.project = project;
-  if (project) S = await api('/api/state?project=' + encodeURIComponent(project));
-  if (!S.projects.length) page = 'projects';
+  S = project ? await api('/api/state?project=' + encodeURIComponent(project)) : state;
+  // 加载期间收到的任务事件可能比状态接口的响应更新。
+  if (lastJobEvent !== jobEventAtStart) S.job = lastJobEvent.job;
+  if (!S.projects.length && page !== 'global') page = 'projects';
   S.apps = S.current?.apps ?? [];
   if (!S.apps.find((a) => a.key === cur)) cur = S.apps[0]?.key;
   render();
@@ -282,12 +286,14 @@ const defPick = (f) => f.remote?.kind !== 'conflict';
 const pickKey = (id) => JSON.stringify([project, cur, id]);
 const isPicked = (id, def) => picks.get(pickKey(id)) ?? def;
 const setPick = (id, on) => picks.set(pickKey(id), on);
+const settingPick = (s) => s.synced ? 'again:' + s.id : s.id;
 function uploadSelection(a) {
   const fields = editedFields(a).filter((f) => isPicked(f.key, defPick(f)));
   const images = a.images.pending.filter((rel) => isPicked('asset:' + rel, true));
+  const settings = (a.settings || []).filter((s) => isPicked(settingPick(s), !s.synced)).map((s) => s.id);
   const overwriteConflicts = fields.filter((f) => f.remote?.kind === 'conflict').map((f) => f.key);
-  const label = [fields.length && `${fields.length} 处文本`, images.length && `${images.length} 张图片`].filter(Boolean).join('、') || '0 项';
-  return { fields, images, overwriteConflicts, label };
+  const label = [fields.length && `${fields.length} 处文本`, images.length && `${images.length} 张图片`, settings.length && `${settings.length} 项后台设置`].filter(Boolean).join('、') || '0 项';
+  return { fields, images, settings, overwriteConflicts, label };
 }
 
 // ---- BBCode 预览 ----
@@ -314,15 +320,17 @@ function diffHtml(f) {
 // ================= 概览 =================
 function renderOverview(a) {
   const s = a.summary;
+  const pendingSettings = (a.settings || []).filter(x => !x.synced).length;
   const stat = (n, label, cls, tabId, title) => `<a class="stat ${n ? cls : 'zero'}" data-tab="${tabId}" title="${title}"><b>${n}</b>${label}</a>`;
   return `<div class="overview bar">
     <div class="ttl"><h2>${esc(a.name || a.key)}</h2>
       <div class="muted small">App ${a.appid} · ${a.languages.map(langName).join('、')}${a.inherits ? ` · <span class="pill inh" title="没有单独设置的文本和图片都用正式版的">Demo，继承 ${esc(appLabel(a.inherits))}</span>` : ''}</div>
       ${a.noStandalonePage ? '<div class="small" style="color:var(--warn)">这个 Demo 没有独立商店页（后台“Demo 有独立的商店页”没勾选），仍然可以同步</div>' : ''}</div>
     <div class="stats">
-      ${s.textEdits || s.imagesPending
+      ${s.textEdits || s.imagesPending || pendingSettings
         ? (s.textEdits ? stat(s.textEdits, '处文本待上传', 'info', 'text', '本地改过、还没上传到后台的文本') : '')
           + (s.imagesPending ? stat(s.imagesPending, '张图片待上传', 'info', 'images', '本地新增或改过、还没上传到后台的图片') : '')
+          + (pendingSettings ? stat(pendingSettings, '项后台设置待推送', 'info', 'draft', '内容调查、图像设置和客户端图标') : '')
         : '<span class="stat zero">✓ 没有待上传的改动</span>'}
       ${s.errors ? stat(s.errors, '个错误', 'err', 'issues', '规则检查发现的错误') : ''}
       ${s.warnings ? stat(s.warnings, '个提醒', 'warn', 'issues', '规则检查发现的提醒') : ''}
@@ -351,7 +359,7 @@ function renderResult(a) {
       ${cands.map((d, i) => `<label><input type="radio" name="democand" value="${i}" ${d.added ? 'disabled' : ''} ${i === firstPick ? 'checked' : ''}>
         ${esc(d.name)}${d.localName ? `（${esc(d.localName)}）` : ''} · App ID ${d.appid}${d.added ? ` <span class="pill ok">已添加（${esc(d.added)}）</span>` : ''}</label>`).join('')}
       ${cands.some((d) => !d.added) ? '<button class="b primary" data-adddemo style="margin-top:6px">添加选中的 Demo</button>' : ''}</div>` : ''}
-    ${r.changedRemote ? '<div class="small" style="margin-top:6px">已保存为<b>后台草稿</b>，商店上还看不到。下一步：在 Steamworks 后台“商店页管理 → 发布”页签发布，审核后上线。</div>' : ''}
+    ${r.changedRemote && !r.includesSettings ? '<div class="small" style="margin-top:6px">已保存为<b>后台草稿</b>，商店上还看不到。下一步：在 Steamworks 后台“商店页管理 → 发布”页签发布，审核后上线。</div>' : ''}
     ${r.needLogin ? '<div style="margin-top:8px"><button class="b primary" data-login>登录 Steam</button> <span class="small">Steam 登录过期了，登录后再试一次</span></div>' : ''}
     ${r.ok && r.action === 'login' ? '<div class="small" style="margin-top:6px">下一步：点上面的“从后台拉取”，把商店内容下载到本地。</div>' : ''}
     ${!r.ok ? '<div class="small" style="margin-top:6px"><a data-openlog>打开完整日志</a></div>' : ''}
@@ -614,7 +622,7 @@ function renderImages(a) {
   h += renderBoard(a, 'library', '库资源', '商店页管理 → 图像资产 → 库资产');
   const sh = im.screenshots;
   h += `<div class="card" data-dropslot="screenshot|*" data-droplabel="截图"><div class="hd"><h3>截图</h3><span class="where">${esc(sh.where)}</span><span class="sp"></span>
-    <span class="small muted">本地 ${sh.local.length} 张 · 后台 ${sh.remoteCount ?? '未知'} 张 · 至少 1920 × 1080，所有语言共用</span></div><div class="bd">`;
+    <span class="small muted">本地 ${sh.local.length} 张 · 后台 ${sh.remoteCount ?? '未知'} 张 · 玩法展示 ${sh.gameplayCount ?? '未知'} / 5 张</span></div><div class="bd">`;
   h += sh.local.length ? `<div class="shots">${sh.local.map((x) => {
     const id = 'asset:' + x.rel, pending = x.state !== 'same';
     return `<div><div class="ibox" title="${esc(x.rel)} · ${x.size}${x.inherited ? ' · 继承自正式版' : ''}">${imgTag(localUrl(a, x.rel, x.bytes))}</div><div class="cellfoot">${pending ? `<input type="checkbox" data-pick="${esc(id)}" ${isPicked(id, true) ? 'checked' : ''}>` : ''}
@@ -641,11 +649,19 @@ function renderIssues(a) {
 }
 
 // ================= 底部操作栏 =================
+function renderDraftSettings(a) {
+  const rows = a.settings || [];
+  if (!rows.length) return '<div class="card"><div class="bd">可在本 App 的 store/_steamworks.yaml 填写 AI 披露、截图类别和库徽标位置，在 assets/client-icons/ 放入 shortcut.png 与 app.jpg。</div></div>';
+  return `<div class="card"><div class="bd">${rows.map(s => `<label style="display:block;margin-bottom:12px">
+    <input type="checkbox" data-pick="${esc(settingPick(s))}" ${isPicked(settingPick(s), !s.synced) ? 'checked' : ''}> <b>${esc(s.label)}</b>
+    <span class="pill ${s.synced ? 'ok' : 'info'}">${s.synced ? '上次已核对' : '待推送'}</span>
+    <span class="small muted" style="display:block;white-space:pre-wrap;margin-left:24px">${esc(s.preview)}</span></label>`).join('')}</div></div>`;
+}
 function renderActionBar(a) {
   const bar = $('#actionbar');
-  if (!a.summary.textEdits && !a.images.pending.length) { bar.style.display = 'none'; return; }
   const sel = uploadSelection(a);
-  const disabled = S.job || (!sel.fields.length && !sel.images.length) ? 'disabled' : '';
+  if (!a.summary.textEdits && !a.images.pending.length && !sel.settings.length && !(a.settings || []).some(s => !s.synced)) { bar.style.display = 'none'; return; }
+  const disabled = S.job || (!sel.fields.length && !sel.images.length && !sel.settings.length) ? 'disabled' : '';
   bar.innerHTML = `<span>已勾选 <b>${sel.label}</b>${sel.overwriteConflicts.length ? `（含 ${sel.overwriteConflicts.length} 处文本冲突）` : ''}</span>
     <a class="small" data-pickall="1">全选</a><a class="small" data-pickall="0">全不选</a><span class="sp"></span>
     <button class="b" data-upload="dry" ${disabled}>预览将要上传的内容</button>
@@ -710,6 +726,24 @@ function renderInit() {
 }
 
 // ================= 设置 =================
+let globalDraft = null;
+function renderGlobalSettings() {
+  return `<div class="overview"><h2>全局设置</h2><div class="muted small">保存在本机，所有游戏项目共用。</div></div>
+    <form id="global-settings"><div class="card"><div class="hd"><h3>默认商店署名</h3></div><div class="bd form">
+      <label for="g-developer">开发者名称</label><input type="text" id="g-developer" value="${esc(globalDraft.developer)}">
+      <label for="g-publisher">发行商名称</label><input type="text" id="g-publisher" value="${esc(globalDraft.publisher)}">
+    </div></div><p class="small muted">留空表示不设默认值。拉取时仅补全后台尚未填写的署名，Demo 跟随正式版。核对本地改动后再上传。</p>
+    <button type="submit" class="b primary">保存全局设置</button></form>`;
+}
+document.addEventListener('submit', async (event) => {
+  if (event.target.id !== 'global-settings') return;
+  event.preventDefault();
+  try {
+    globalDraft = await api('/api/global-settings', { developer: $('#g-developer').value, publisher: $('#g-publisher').value });
+    if (page === 'global') { $('#main').innerHTML = renderGlobalSettings(); alert('已保存全局设置'); }
+  } catch (err) { alert(err.message); }
+});
+
 let draft = null, draftFor = '', settingsError = '', demoMsg = null;
 async function loadSettings() {
   draft = await api('/api/settings?project=' + encodeURIComponent(project));
@@ -849,13 +883,14 @@ function renderNav() {
     }
     h += link('settings', '设置') + link('rules', 'AI 规则');
   }
-  h += `<div class="navfoot">${link('projects', '所有项目')}</div>`;
+  h += `<div class="navfoot">${link('projects', '所有项目')}${link('global', '全局设置')}</div>`;
   return h;
 }
 
 function render() {
   // 重新渲染前把表单里还没保存的输入收回来
   if (page === 'settings' && draft && $('#s-browser')) readDraftFromForm();
+  if (page === 'global' && $('#g-developer')) globalDraft = { developer: $('#g-developer').value, publisher: $('#g-publisher').value };
   if (page === 'rules' && rules && $('#rules')) rules.text = $('#rules').value;
   $('#hproj').innerHTML = renderHeaderProject();
   $('#loginst').innerHTML = renderLoginStatus();
@@ -866,7 +901,8 @@ function render() {
   const focus = document.activeElement?.id;
   const cp = S.current;
   let body = null;
-  if (page === 'projects' || !cp) body = renderProjects();
+  if (page === 'global') body = renderGlobalSettings();
+  else if (page === 'projects' || !cp) body = renderProjects();
   else if (!cp.exists) body = `<div class="empty-state">项目文件夹不存在：${esc(cp.dir)}<br><br><a data-page="projects">去项目列表</a></div>`;
   else if (!cp.configured) body = renderInit();
   else if (cp.error && page !== 'settings') body = `<div class="err-box">✗ 配置文件有错：${esc(cp.error)}</div><div class="small muted">可以在“设置”里修改，或者直接编辑 ${esc(cp.config)}</div>`;
@@ -883,8 +919,9 @@ function render() {
     $('#main').innerHTML = renderOverview(a) + renderResult(a) + `<div class="tabs">
         <button data-tab="text" class="${tab === 'text' ? 'on' : ''}">商店文本 ${s.textEdits ? `<span class="pill info">${s.textEdits}</span>` : ''}</button>
         <button data-tab="images" class="${tab === 'images' ? 'on' : ''}">图片 ${s.imagesPending ? `<span class="pill info">${s.imagesPending}</span>` : ''}</button>
+        <button data-tab="draft" class="${tab === 'draft' ? 'on' : ''}">后台设置</button>
         <button data-tab="issues" class="${tab === 'issues' ? 'on' : ''}">问题 ${s.errors ? `<span class="pill err">${s.errors}</span>` : s.warnings ? `<span class="pill warn">${s.warnings}</span>` : ''}</button>
-      </div>` + (tab === 'text' ? renderText(a) : tab === 'images' ? renderImages(a) : renderIssues(a));
+      </div>` + (tab === 'text' ? renderText(a) : tab === 'images' ? renderImages(a) : tab === 'draft' ? renderDraftSettings(a) : renderIssues(a));
     renderActionBar(a);
   }
   if (S.job) document.querySelectorAll('[data-run]').forEach((b) => b.disabled = true);
@@ -923,12 +960,13 @@ document.addEventListener('click', async (e) => {
   else if (d.subtab) { subtab = localStorage.subtab = d.subtab; render(); }
   else if (d.run) run({ action: d.run });
   else if (d.upload) {
-    const { fields, images, overwriteConflicts, label } = uploadSelection(a);
+    const { fields, images, settings, overwriteConflicts, label } = uploadSelection(a);
     const dryRun = d.upload === 'dry';
     const notes = [`将 ${label} 保存到「${a.name || a.key}」的 Steamworks 后台草稿？`];
     if (overwriteConflicts.length) notes.push(`这 ${overwriteConflicts.length} 处冲突会用本地文本覆盖后台：\n${overwriteConflicts.map((k) => fieldLabel(a, k)).join('、')}`);
     if (images.length) notes.push('宣传图和库资源会替换相同位置、相同语言的图片，截图会新增。');
-    run({ action: 'upload', fields: fields.map((f) => f.key), images, overwriteConflicts, dryRun }, dryRun ? null : notes.join('\n\n'));
+    if (settings.length) notes.push('将保存：' + a.settings.filter(s => settings.includes(s.id)).map(s => s.label).join('、'));
+    run({ action: 'upload', fields: fields.map((f) => f.key), images, settings, overwriteConflicts, dryRun }, dryRun ? null : notes.join('\n\n'));
   } else if (d.sortinbox !== undefined) {
     try { const r = await api('/api/images/sort', P({ app: cur })); sortMsg = r.lines; await load(); } catch (err) { alert(err.message); }
   } else if (d.delimg) {
@@ -971,6 +1009,7 @@ ${c?.local ? `本地文件 ${c.local.rel} 不会删除，它会变回“待上�
     const on = d.pickall === '1';
     for (const f of editedFields(a)) setPick(f.key, on);
     for (const rel of a.images.pending) setPick('asset:' + rel, on);
+    for (const s of a.settings || []) setPick(settingPick(s), on && !s.synced);
     render();
   } else if (d.dismiss) { resultSeen = localStorage.resultSeen = d.dismiss; render(); }
   else if (d.openlog !== undefined) setLog(true);
@@ -980,7 +1019,12 @@ ${c?.local ? `本地文件 ${c.local.rel} 不会删除，它会变回“待上�
     if (!confirm('退出 AutoSteamworks？（下次从桌面快捷方式打开）')) return;
     await api('/api/quit', {}).catch(() => {});
     document.body.innerHTML = '<div class="empty-state" style="padding-top:120px">AutoSteamworks 已退出，可以关闭这个页面了。<br><br>下次从桌面的“AutoSteamworks”快捷方式打开。</div>';
-  } else if (d.page) { page = d.page; render(); }
+  } else if (d.page) {
+    if (d.page === 'global' && page !== 'global') {
+      try { globalDraft = await api('/api/global-settings'); } catch (err) { alert(err.message); return; }
+    }
+    page = d.page; render();
+  }
   else if (d.openproj) { await switchProject(d.openproj); }
   else if (d.removeproj) {
     if (!confirm('从列表里移除这个项目？（不会删除任何文件，以后可以再添加）')) return;
@@ -1128,9 +1172,17 @@ document.addEventListener('toggle', (e) => { if (e.target.classList?.contains('r
 document.addEventListener('input', (e) => { if (e.target.id === 'filter') { filter = e.target.value; render(); } });
 
 const es = new EventSource('/api/events');
+function updateJob(job) {
+  lastJobEvent = { job };
+  if (S) S.job = job;
+}
 es.addEventListener('log', (e) => log(JSON.parse(e.data)));
-es.addEventListener('job', (e) => { S.job = JSON.parse(e.data); log(''); setLog(true); render(); });
-es.addEventListener('done', () => { S.job = null; setLog(false); load(); });
+es.addEventListener('job', (e) => {
+  updateJob(JSON.parse(e.data));
+  log(''); setLog(true);
+  if (S) render();
+});
+es.addEventListener('done', () => { updateJob(null); setLog(false); load(); });
 // 编辑中不自动刷新，免得冲掉正在输入的内容
 es.addEventListener('changed', () => { if (!editing && !$('#i-name')) load(); });
 

@@ -23,6 +23,23 @@ irm https://raw.githubusercontent.com/MeowMeowZi/AutoSteamworks/main/install.ps1
 
 项目的配置（App、语言、截图年龄声明等）在网页的“设置”里改，给 AI 的规则在“AI 规则”里改。网页右上角的“退出”会停止后台；再双击快捷方式就会重新打开（已经在运行时直接打开现有的页面）。
 
+跨项目共用的开发者、发行商名称在左侧“全局设置”里填写。下次拉取时，工具只给尚未署名的角色填上本地默认值，不覆盖已有名称；Demo 沿用正式版的继承规则。默认值留空就不填，保存设置不会上传到 Steamworks。
+
+### 准备后台设置
+
+网页的「后台设置」从每个 App 自己的 `store/_steamworks.yaml` 读取可选设置。以下示例为一张战斗截图设置类别，并将库徽标放到左下角。
+
+```yaml
+screenshotCategories:
+  battle.png: gameplay    # assets/screenshots/ 中的文件名
+logoPlacement:
+  anchor: BottomLeft
+  width: 22               # 相对于库主页图的百分比
+  height: 32
+```
+
+`aiDescription` 按 Steam 语言名（如 `schinese`、`english`）填写已确认的公开披露文案。截图类别支持 `gameplay`、`gamemenu`、`cinematic`、`conceptart`。徽标锚点支持 `BottomLeft`、`UpperCenter`、`CenterCenter`、`BottomCenter`。两种图标从本 App 资产目录下的 `client-icons/shortcut.png` 和 `client-icons/app.jpg` 自动识别。
+
 ### 命令行（可选）
 
 所有操作也都能用命令行完成，适合自动化或者在游戏项目目录里直接用：
@@ -52,7 +69,7 @@ autosw shortcut      # 重新创建桌面和开始菜单快捷方式
 npm run autosw -- ui         # 打开 http://127.0.0.1:5180/
 ```
 
-- 左边是配置里的各个 App，右边分“商店文本”和“图片”两页。
+- 选中 App 后，在「商店文本」「图片」「后台设置」里勾选要推送的项目，再预览或一键上传。「后台设置」包含 AI 披露、已有截图的类别、库徽标位置和客户端图标。
 - 文本按字段分卡片，各语言并排显示；本地改过的字段会标出来，并高亮删掉和新增的文字。可以打开 BBCode 预览，也可以直接在网页上编辑或还原。
 - 顶部的“规则检查”会提示超长的简短描述、没闭合的 BBCode 标签、还没翻译的语言。
 - “和线上对比”会读一次后台，标出线上被别人改过的字段和冲突。

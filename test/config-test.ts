@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import YAML from 'yaml';
 import { addAppLanguages, createConfig, DEFAULTS, loadConfig, readSettings, writeSettings } from '../src/config.js';
+import { creatorDefaults } from '../src/globalSettings.js';
 
 const ws = mkdtempSync(join(tmpdir(), 'autosw-config-'));
 let n = 0;
@@ -14,6 +15,11 @@ const PROFILE = 'browser: { profileDir: .autosw/profile }\n'; // 不用真实的
 
 let ok = false;
 try {
+  const creatorNames = { developer: '开发组', publisher: '发行团队' };
+  const developer = 'app[game][developers][0][name]', publisher = 'app[game][publishers][0]';
+  assert.deepEqual(creatorDefaults({}, creatorNames), {});
+  assert.deepEqual(creatorDefaults({ [developer]: '', [publisher]: '' }, { ...creatorNames, publisher: '' }), { [developer]: '开发组' });
+  assert.deepEqual(creatorDefaults({ [developer]: '', 'app[game][developers][1][name]': '原作者', [publisher]: '' }, creatorNames), { [publisher]: '发行团队' });
   // ---- 默认值 ----
   let f = cfg(`${PROFILE}apps:\n  game: { appid: 1 }\n`);
   let c = loadConfig(f);

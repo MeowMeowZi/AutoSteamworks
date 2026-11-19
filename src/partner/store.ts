@@ -88,12 +88,17 @@ export interface PushResult {
 }
 
 /** 打开编辑页 → 写入改动 → 提交整个表单 → 重新加载页面，确认值确实保存上了 */
-export async function pushStore(page: Page, cfg: Config, app: AppConfig, changes: [string, FieldValue][]): Promise<PushResult> {
+export async function pushStore(page: Page, cfg: Config, app: AppConfig, changes: [string, FieldValue][], log: (line: string) => void): Promise<PushResult> {
+  log(`  正在打开后台编辑表单，准备填写 ${changes.length} 个字段…`);
   await loadStorePage(page, cfg, app);
   const missing = await applyFields(page, cfg.formSelector, changes);
   const attempted = changes.filter(([k]) => !missing.includes(k));
   let status = 0;
-  if (attempted.length) ({ status } = await postForm(page, cfg.formSelector));
+  if (attempted.length) {
+    log(`  正在提交 ${attempted.length} 个字段到后台草稿，等待 Steamworks 响应…`);
+    ({ status } = await postForm(page, cfg.formSelector));
+    log(`  后台已响应（HTTP ${status}），正在重新读取草稿并核对字段值…`);
+  }
 
   const after = await fetchRemote(page, cfg, app);
   const notPersisted = attempted.filter(([key, value]) => !sameFieldValue(key, after[key], value)).map(([key]) => key);

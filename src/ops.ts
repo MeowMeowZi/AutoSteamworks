@@ -2,12 +2,13 @@
 import { createTwoFilesPatch } from 'diff';
 import type { Page } from 'playwright-core';
 import { addAppLanguages, type AppConfig, type Config } from './config.js';
+import { creatorDefaults, readGlobalSettings } from './globalSettings.js';
 import { hasLoginCookie, isLoginPage, openBrowser, PARTNER_HOME, sleep } from './browser.js';
 import type { FieldValue } from './partner/form.js';
 import { fetchRemote, fetchRemoteAll, openEditPage, pushStore } from './partner/store.js';
 import { hasLocal, keepLanguages, readLocal, readLocalLayers, readSnapshot, splitLocalized, writeLocal, writeSnapshot } from './local/storeFiles.js';
 import { threeWay, type Change } from './sync.js';
-import { deleteAssets, openAssetsPage, uploadAssets } from './partner/assets.js';
+import { deleteAssets, openAssetsPage, uploadAssets, type AssetResult } from './partner/assets.js';
 import { remotePath, SLOTS } from './slots.js';
 import { cellName, filesIn, remoteLang, scanCells, type Cell } from './local/imageCells.js';
 import { LANG_NAMES } from './fieldInfo.js';
@@ -72,8 +73,10 @@ export async function pullApp(page: Page, c: Config, app: AppConfig, o: { force?
     log(`  + 后台勾选了 ${added.map((l) => LANG_NAMES[l] ?? l).join('、')}，已加进同步语言（steam.config.yaml），一起拉取`);
   }
   const fields = keepLanguages(app, all);
-  writeLocal(app, fields);
+  const defaults = parent ? {} : creatorDefaults(fields, readGlobalSettings());
+  writeLocal(app, { ...fields, ...defaults });
   writeSnapshot(app, fields);
+  if (Object.keys(defaults).length) log('  已用全局设置补全本地署名，可在商店文本中核对后上传', 'result');
   log(`  ✓ ${Object.keys(fields).length} 个字段 → ${app.storeDir}`, 'result');
   if (parent) {
     log(`  ${app.key} 单独设置了 ${Object.keys(readLocalLayers(app).own).length} 个字段，其余跟随 ${parent.key}`, 'result');
@@ -107,6 +110,7 @@ export async function pushApp(page: Page, c: Config, app: AppConfig, o: PushOpts
     log('  尚未 pull，跳过（必须先 pull 才能安全地推送）', 'result');
     return { failed: false, pushed: false };
   }
+  log('  正在读取后台商店文本，与本地改动比对…');
   const remote = await fetchRemote(page, c, app);
   const plan = planPush(readLocal(app), remote, base, o);
   const confirmedBase = snapshotAfterPush(base, plan.confirmed, remote);
@@ -120,7 +124,7 @@ export async function pushApp(page: Page, c: Config, app: AppConfig, o: PushOpts
   plan.toPush.forEach((ch) => printChange(log, ch, !!o.dryRun, o.dryRun ? 'result' : 'detail'));
   if (o.dryRun) return { failed: false, pushed: false };
 
-  const r = await pushStore(page, c, app, pushEntries(plan));
+  const r = await pushStore(page, c, app, pushEntries(plan), log);
   writeSnapshot(app, snapshotAfterPush(confirmedBase, r.saved, r.after));
   log(`  ✓ 已保存 ${r.saved.length} 个字段（HTTP ${r.status}）`, 'result');
   if (r.missing.length) log(`  ✗ 页面上找不到: ${r.missing.map(display).join(', ')}`, 'result');
@@ -138,6 +142,7 @@ export interface AssetsOpts {
 
 /** 上传图片。返回 failed / pushed 两个标志 */
 export async function assetsApp(page: Page, c: Config, app: AppConfig, o: AssetsOpts, log: Log) {
+  log('  正在扫描本地图片，核对上传记录…');
   const scan = scanCells(app);
   scan.warnings.forEach((w) => log(`  ⚠ ${w}`, 'result'));
   const manifest = readManifest(c, app);
@@ -158,10 +163,14 @@ export async function assetsApp(page: Page, c: Config, app: AppConfig, o: Assets
     log('  ℹ Steam 规定：基础宣传图只能包含游戏美术、游戏名称和官方副标题；宣传更新/活动的文字要作为替代艺术作品上传。');
   }
 
+  log('  正在打开后台图像资产页…');
   await openAssetsPage(page, c, app);
-  const results = await uploadAssets(page, c, app, plan.todo.map((s) => ({ ...s.file, expectChange: s.state !== 'same' })), { allAges: app.assets.screenshotsAllAges, dryRun: !!o.dryRun });
-  for (const [i, r] of results.entries()) {
-    const s = plan.todo[i];
+  const items = plan.todo.map((s) => ({ ...s.file, expectChange: s.state !== 'same' }));
+  const opts = { allAges: app.assets.screenshotsAllAges, dryRun: !!o.dryRun, pendingOnly: o.pendingOnly };
+  const results: AssetResult[] = [];
+  for await (const { index, result: r } of uploadAssets(page, c, app, items, opts, log)) {
+    results.push(r);
+    const s = plan.todo[index];
     const note = s.state === 'changed' ? '（已修改）' : '';
     if (!r.ok) {
       failed = true;
@@ -170,6 +179,10 @@ export async function assetsApp(page: Page, c: Config, app: AppConfig, o: Assets
       continue;
     }
     const where = s.file.lang && r.key?.endsWith('|' + s.file.lang) ? ` [${s.file.lang}]` : '';
+    if (r.alreadyPresent) {
+      log(`  ✓ ${r.rel}：后台已有相同截图，已核对原图`, 'result');
+      continue;
+    }
     const slot = SLOTS.find((x) => x.label === r.type);
     const from = s.file.inherited ? `（${app.inherits?.key} 的图）` : "";
     log(`  ${o.dryRun ? "→" : "✓"} ${r.rel}${from}${note}  ${r.type} ${r.size}${where}${r.verified ? '（已核对）' : ''}`, 'result');

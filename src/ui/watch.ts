@@ -41,9 +41,18 @@ function signature() {
 
 export function createWatch({ paused, intervalMs = 1000 }: WatchOptions) {
   const clients = new Set<ServerResponse>();
+  // 留一份最近任务的事件。推送中打开页面可以补看开头，断线重连只补漏掉的行。
+  const jobEvents: { id: number; message: string }[] = [];
+  let eventId = Date.now();
 
   const send = (event: string, data: unknown) => {
-    const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    let msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    if (event === 'job') jobEvents.length = 0;
+    if (event === 'job' || event === 'log' || event === 'done') {
+      const id = ++eventId;
+      msg = `id: ${id}\n` + msg;
+      jobEvents.push({ id, message: msg });
+    }
     for (const c of clients) c.write(msg);
   };
 
@@ -57,9 +66,13 @@ export function createWatch({ paused, intervalMs = 1000 }: WatchOptions) {
   return {
     send,
     /** 接上一个 GET /api/events 请求 */
-    attach(res: ServerResponse) {
+    attach(res: ServerResponse, lastEventId?: string) {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
       res.write(': hi\n\n');
+      if (paused() || lastEventId) {
+        const seen = Number(lastEventId ?? 0);
+        for (const e of jobEvents) if (e.id > seen) res.write(e.message);
+      }
       clients.add(res);
       res.on('close', () => clients.delete(res));
     },

@@ -1,4 +1,5 @@
 import type { Page } from 'playwright-core';
+import { createHash } from 'node:crypto';
 import type { AppConfig, Config } from '../config.js';
 import { sleep } from '../browser.js';
 import { openEditPage } from './store.js';
@@ -34,6 +35,7 @@ export interface AssetResult {
   body?: string;
   /** 上传后从后台数据里确认到了变化 */
   verified?: boolean;
+  alreadyPresent?: boolean;
   warning?: string;
 }
 
@@ -75,14 +77,19 @@ const UPLOAD_ONE = `(async (a) => {
   const assetKey = parts[parts.indexOf('assets') + 1];
   const readAssets = async () => {
     try {
-      const html = await (await fetch(location.href, { credentials: 'same-origin' })).text();
-      const m = html.match(/name="serialized_app_data"\\s+value="([^"]*)"/);
-      if (!m) return null;
-      const ta = document.createElement('textarea'); ta.innerHTML = m[1];
-      return JSON.parse(ta.value).assets || {};
+      const response = await fetch(location.href, { credentials: 'same-origin' });
+      if (!response.ok) return null;
+      const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+      const data = doc.querySelector('input[name=serialized_app_data]');
+      return data ? JSON.parse(data.value).assets || {} : null;
     } catch (e) { return null; }
   };
   const before = await readAssets();
+  if (a.screenshotHash && !before) return { ok: false, error: '无法读取后台已有截图，请刷新后台状态后重试' };
+  if (a.screenshotHash && Object.values(before?.screenshots || {}).some(s =>
+    typeof s?.english === 'string' && s.english.split('/').pop() === 'ss_' + a.screenshotHash + '.jpg')) {
+    return { ok: true, type: t.label || t.name, size, key, verified: true, alreadyPresent: true };
+  }
 
   fd.append(key, blob, filename);
   fd.append('sessionid', g_sessionID);
@@ -183,19 +190,24 @@ export async function deleteAssets(page: Page, cfg: Config, app: AppConfig, targ
 
 export const openAssetsPage = (page: Page, cfg: Config, app: AppConfig) => openEditPage(page, cfg, app, 'tab_graphicalassets');
 
-/** 逐个上传（或 dryRun 时只判断类型）。调用前先 openAssetsPage；传上去过图时最后再打开一次页面，让后台状态快照是上传后的样子 */
-export async function uploadAssets(page: Page, cfg: Config, app: AppConfig, items: (AssetUpload & { expectChange: boolean })[], opts: { allAges?: boolean; dryRun: boolean }) {
-  const results: AssetResult[] = [];
-  for (const it of items) {
+/** 每张图处理完就交给调用方显示结果，最后再刷新后台状态快照。调用前先 openAssetsPage。 */
+export async function* uploadAssets(page: Page, cfg: Config, app: AppConfig, items: (AssetUpload & { expectChange: boolean })[], opts: { allAges?: boolean; dryRun: boolean; pendingOnly?: boolean }, log: (line: string) => void) {
+  let anyUploaded = false;
+  for (const [index, it] of items.entries()) {
+    log(`  [${index + 1}/${items.length}] ${opts.dryRun ? '正在检查' : '正在上传'} ${it.rel}…`);
     const ext = it.filename.split('.').pop()!.toLowerCase();
     const arg = {
       b64: it.bytes.toString('base64'), mime: MIME[ext], filename: it.filename, tab: it.tab, lang: it.lang,
       allAges: opts.allAges, dryRun: opts.dryRun, expectChange: it.expectChange,
+      screenshotHash: opts.pendingOnly && it.tab === 'screenshot' ? createHash('sha1').update(it.bytes).digest('hex') : undefined,
     };
     const r = (await page.evaluate(`${UPLOAD_ONE}(${JSON.stringify(arg)})`)) as Omit<AssetResult, 'rel'>;
-    results.push({ rel: it.rel, ...r });
+    anyUploaded ||= !opts.dryRun && r.ok && !r.alreadyPresent;
+    yield { index, result: { rel: it.rel, ...r } };
     if (!opts.dryRun && r.status) await sleep(cfg.delayMs);
   }
-  if (!opts.dryRun && results.some((r) => r.ok)) await openAssetsPage(page, cfg, app);
-  return results;
+  if (anyUploaded) {
+    log('  正在刷新后台图片状态…');
+    await openAssetsPage(page, cfg, app);
+  }
 }
