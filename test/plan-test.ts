@@ -42,6 +42,8 @@ try {
   assert.deepEqual(pushEntries(p), [[D('english'), 'local']], '冲突默认不推');
   p = planPush(local, remote, base, { force: true });
   assert.deepEqual(p.toPush.map((c) => c.key), [D('english'), D('schinese')], 'force 连冲突一起推');
+  p = planPush(local, { ...remote, [D('english')]: 'new conflict' }, base, { overwriteConflicts: [D('schinese')] });
+  assert.deepEqual(p.toPush.map((c) => c.key), [D('schinese')], '一键上传只覆盖用户确认的冲突');
   p = planPush(local, remote, base, { only: [D('schinese')], force: true });
   assert.deepEqual(p.changes.map((c) => c.key), [D('schinese')], 'only 只看指定字段');
   const snap = snapshotAfterPush(base, [D('english')], { [D('english')]: 'local', [D('schinese')]: '线上' });
@@ -86,6 +88,7 @@ try {
   assert.equal(planAssets(scan, manifest, { force: true }).todo.length, 4, 'force 全部重传');
   a = planAssets(scan, manifest, { only: ['library/english/hero.png'] });
   assert.deepEqual(rels(a), ['library/english/hero.png'], 'only 即使没改也传');
+  assert.deepEqual(rels(planAssets(scan, manifest, { only: ['screenshots/s1.png', 'store/english/header.png'], pendingOnly: true })), ['store/english/header.png'], '重试一键上传跳过已传过的截图');
   assert.deepEqual(a.rejected, [], 'only 不包含的坏图不报');
   assert.equal(a.error, undefined, '不传截图就不要求声明年龄');
 

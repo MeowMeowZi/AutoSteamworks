@@ -32,10 +32,10 @@ export interface PushPlan {
   confirmed: string[];
 }
 
-export function planPush(local: Fields, remote: Fields, base: Fields, o: { only?: string[]; force?: boolean }): PushPlan {
+export function planPush(local: Fields, remote: Fields, base: Fields, o: { only?: string[]; force?: boolean; overwriteConflicts?: string[] }): PushPlan {
   let changes = threeWay(local, remote, base);
   if (o.only) changes = changes.filter((ch) => o.only!.includes(ch.key));
-  const toPush = changes.filter((ch) => ch.kind === 'local' || (o.force && ch.kind === 'conflict'));
+  const toPush = changes.filter((ch) => ch.kind === 'local' || (ch.kind === 'conflict' && (o.force || o.overwriteConflicts?.includes(ch.key))));
   const different = new Set(changes.map((ch) => ch.key));
   const confirmed = localEdits(local, base).filter((key) => (!o.only || o.only.includes(key)) && !different.has(key));
   return { changes, toPush, confirmed };
@@ -67,12 +67,13 @@ export interface AssetsPlan {
 const TAB_ORDER = ['store', 'library', 'screenshot'];
 
 /** 和网页图片表用同一份扫描（scanCells），网页上的“待上传”就是这里的 todo */
-export function planAssets(scan: CellScan, manifest: AssetManifest, o: { only?: string[]; force?: boolean; allAges?: boolean }): AssetsPlan {
+export function planAssets(scan: CellScan, manifest: AssetManifest, o: { only?: string[]; force?: boolean; allAges?: boolean; pendingOnly?: boolean }): AssetsPlan {
   const pick = (rel: string) => !o.only || o.only.includes(rel);
   const files = [...[...scan.cells.values()].flat(), ...scan.screenshots]
     .sort((a, b) => TAB_ORDER.indexOf(a.tab) - TAB_ORDER.indexOf(b.tab) || (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
-  const todo = files.map((file) => ({ file, state: assetState(file, manifest) }))
-    .filter((it) => (o.only ? pick(it.file.rel) : o.force || it.state !== 'same'));
+  const includeSynced = o.force || (o.only && !o.pendingOnly);
+  const todo = files.filter((file) => pick(file.rel)).map((file) => ({ file, state: assetState(file, manifest) }))
+    .filter((it) => includeSynced || it.state !== 'same');
   const rejected = scan.unmatched.filter((u) => pick(u.rel)).map((u) => ({ rel: u.rel, reason: u.reason }));
   const plan: AssetsPlan = { total: files.length, todo, rejected };
   if (todo.some((it) => it.file.tab === 'screenshot') && o.allAges === undefined) {

@@ -26,7 +26,7 @@ let release!: () => void;
 next = (_r, log) => new Promise((ok) => { log('进行中'); log(' ✓ 完成 ', 'result'); release = () => ok(result({ apps: [{ key: 'game', ok: true, changes: [change] }] })); });
 const done = start(req('diff'));
 assert.deepEqual(jobs.current(), { action: 'diff', project: 'P', app: 'game' });
-assert.ok(jobs.busyWith('diff') && !jobs.busyWith('assets'));
+assert.equal(jobs.uploadingImages(), false);
 const second = jobs.start(req('push'));
 assert.ok('error' in second && second.error === '正在执行 diff，请等它结束', '有任务时不能再开始');
 release();

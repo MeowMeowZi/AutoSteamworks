@@ -5,11 +5,11 @@ import { addAppLanguages, type AppConfig, type Config } from './config.js';
 import { hasLoginCookie, isLoginPage, openBrowser, PARTNER_HOME, sleep } from './browser.js';
 import type { FieldValue } from './partner/form.js';
 import { fetchRemote, fetchRemoteAll, openEditPage, pushStore } from './partner/store.js';
-import { hasLocal, keepLanguages, readLocal, readSnapshot, splitLocalized, writeLocal, writeSnapshot } from './local/storeFiles.js';
+import { hasLocal, keepLanguages, readLocal, readLocalLayers, readSnapshot, splitLocalized, writeLocal, writeSnapshot } from './local/storeFiles.js';
 import { threeWay, type Change } from './sync.js';
 import { deleteAssets, openAssetsPage, uploadAssets } from './partner/assets.js';
 import { remotePath, SLOTS } from './slots.js';
-import { cellName, remoteLang, scanCells, type Cell } from './local/imageCells.js';
+import { cellName, filesIn, remoteLang, scanCells, type Cell } from './local/imageCells.js';
 import { LANG_NAMES } from './fieldInfo.js';
 import { readManifest, writeManifest } from './local/assetFiles.js';
 import { clearCellRecords, manifestAfterUpload, newLanguages, planAssets, planDelete, planPush, pullBlockers, pushEntries, snapshotAfterPush } from './plan.js';
@@ -45,31 +45,49 @@ export function printChange(log: Log, c: Change, verbose: boolean, kind: LogKind
   }
 }
 
-/** 拉取线上内容。本地有未推送的改动时不覆盖（除非 force）。返回是否拉取了 */
+/**
+ * 拉取线上内容。本地有未推送的改动时不覆盖（除非 force）。返回是否拉取了。
+ * Demo：正式版要先拉取过（Demo 的本地值跟随正式版的本地值）；只把和正式版不同的值写成覆盖（见 storeFiles.ts 的 writeLocal）；不自动加语言。
+ */
 export async function pullApp(page: Page, c: Config, app: AppConfig, o: { force?: boolean }, log: Log) {
-  const edits = pullBlockers(hasLocal(app) ? readLocal(app) : undefined, readSnapshot(c, app), o.force);
+  const parent = app.inherits;
+  if (parent && !(hasLocal(parent) && readSnapshot(parent))) {
+    log(`  跳过：${app.key} 继承 ${parent.key} 的本地内容，请先拉取 ${parent.key}`, 'result');
+    return false;
+  }
+  const edits = pullBlockers(hasLocal(app) ? readLocal(app) : undefined, readSnapshot(app), o.force);
   if (edits.length) {
     log(`  跳过：本地有 ${edits.length} 个未推送的改动（${edits.slice(0, 3).map(display).join(', ')}…），先 push 或加 --force`, 'result');
+    if (parent) log(`  （${app.key} 继承 ${parent.key}：${parent.key} 本地改过、还没传到 ${app.key} 的内容也算）`, 'result');
     return false;
   }
   const all = await fetchRemoteAll(page, c, app);
-  // 后台“支持的语言”里勾了、本地还没同步的语言：加进配置，一起拉下来
   const added = newLanguages(all, app.languages);
-  if (added.length) {
+  if (added.length && parent) {
+    log(`  ℹ ${app.key} 的后台勾选了 ${added.map((l) => LANG_NAMES[l] ?? l).join('、')}，但 ${app.key} 的语言跟随 ${parent.key}，没有自动加。需要的话在“设置”里加`, 'result');
+  } else if (added.length) {
+    // 后台“支持的语言”里勾了、本地还没同步的语言：加进配置，一起拉下来
     addAppLanguages(c.file, app.key, added);
     app.languages = [...app.languages, ...added];
     log(`  + 后台勾选了 ${added.map((l) => LANG_NAMES[l] ?? l).join('、')}，已加进同步语言（steam.config.yaml），一起拉取`);
   }
   const fields = keepLanguages(app, all);
   writeLocal(app, fields);
-  writeSnapshot(c, app, fields);
+  writeSnapshot(app, fields);
   log(`  ✓ ${Object.keys(fields).length} 个字段 → ${app.storeDir}`, 'result');
+  if (parent) {
+    log(`  ${app.key} 单独设置了 ${Object.keys(readLocalLayers(app).own).length} 个字段，其余跟随 ${parent.key}`, 'result');
+    if (fields[STANDALONE_DEMO] !== undefined && String(fields[STANDALONE_DEMO]) !== '1') log(`  ℹ 这个 Demo 没有独立商店页（${STANDALONE_DEMO} 不是 1），仍然可以同步`, 'result');
+  }
   return true;
 }
 
+/** Demo 编辑页上“Demo 有独立的商店页”。值是 1 时 Demo 有自己的商店页 */
+export const STANDALONE_DEMO = 'app[content][standalone_demo_page]';
+
 /** 三方对比。没 pull 过返回 undefined（仍然打开编辑页，刷新后台状态快照） */
 export async function diffApp(page: Page, c: Config, app: AppConfig): Promise<Change[] | undefined> {
-  const base = readSnapshot(c, app);
+  const base = readSnapshot(app);
   if (!hasLocal(app) || !base) { await openEditPage(page, c, app); return undefined; }
   return threeWay(readLocal(app), await fetchRemote(page, c, app), base);
 }
@@ -77,13 +95,14 @@ export async function diffApp(page: Page, c: Config, app: AppConfig): Promise<Ch
 export interface PushOpts {
   dryRun?: boolean;
   force?: boolean;
+  overwriteConflicts?: string[];
   /** 只推送这些字段（name）；不传就推送全部本地改动 */
   only?: string[];
 }
 
 /** 推送商店文本。返回 failed / pushed 两个标志 */
 export async function pushApp(page: Page, c: Config, app: AppConfig, o: PushOpts, log: Log) {
-  const base = readSnapshot(c, app);
+  const base = readSnapshot(app);
   if (!hasLocal(app) || !base) {
     log('  尚未 pull，跳过（必须先 pull 才能安全地推送）', 'result');
     return { failed: false, pushed: false };
@@ -94,15 +113,15 @@ export async function pushApp(page: Page, c: Config, app: AppConfig, o: PushOpts
   plan.changes.filter((ch) => ch.kind !== 'local').forEach((ch) => printChange(log, ch, false, ch.kind === 'remote' ? 'detail' : 'result'));
   if (plan.confirmed.length && !o.dryRun) log(`  ✓ 后台已有相同的值，已核对 ${plan.confirmed.length} 个字段`, 'result');
   if (!plan.toPush.length) {
-    if (plan.confirmed.length && !o.dryRun) writeSnapshot(c, app, confirmedBase);
+    if (plan.confirmed.length && !o.dryRun) writeSnapshot(app, confirmedBase);
     log('  没有需要推送的改动', 'result');
     return { failed: false, pushed: false };
   }
-  plan.toPush.forEach((ch) => printChange(log, ch, !!o.dryRun));
+  plan.toPush.forEach((ch) => printChange(log, ch, !!o.dryRun, o.dryRun ? 'result' : 'detail'));
   if (o.dryRun) return { failed: false, pushed: false };
 
   const r = await pushStore(page, c, app, pushEntries(plan));
-  writeSnapshot(c, app, snapshotAfterPush(confirmedBase, r.saved, r.after));
+  writeSnapshot(app, snapshotAfterPush(confirmedBase, r.saved, r.after));
   log(`  ✓ 已保存 ${r.saved.length} 个字段（HTTP ${r.status}）`, 'result');
   if (r.missing.length) log(`  ✗ 页面上找不到: ${r.missing.map(display).join(', ')}`, 'result');
   if (r.notPersisted.length) log(`  ✗ 提交了但重新加载后值不对: ${r.notPersisted.map(display).join(', ')}`, 'result');
@@ -112,6 +131,7 @@ export async function pushApp(page: Page, c: Config, app: AppConfig, o: PushOpts
 export interface AssetsOpts {
   dryRun?: boolean;
   force?: boolean;
+  pendingOnly?: boolean;
   /** 只上传这些图片（相对 assets 目录的路径） */
   only?: string[];
 }
@@ -151,7 +171,8 @@ export async function assetsApp(page: Page, c: Config, app: AppConfig, o: Assets
     }
     const where = s.file.lang && r.key?.endsWith('|' + s.file.lang) ? ` [${s.file.lang}]` : '';
     const slot = SLOTS.find((x) => x.label === r.type);
-    log(`  ${o.dryRun ? '→' : '✓'} ${r.rel}${note}  ${r.type} ${r.size}${where}${r.verified ? '（已核对）' : ''}`, 'result');
+    const from = s.file.inherited ? `（${app.inherits?.key} 的图）` : "";
+    log(`  ${o.dryRun ? "→" : "✓"} ${r.rel}${from}${note}  ${r.type} ${r.size}${where}${r.verified ? '（已核对）' : ''}`, 'result');
     if (r.warning) log(`      ⚠ ${r.warning}`, 'result');
     if (slot && !o.dryRun) log(`      后台位置：${slot.where}${slot.localized && s.file.lang ? ' → ' + s.file.lang : ''}（后台会把文件改名，不显示原文件名）`, 'result');
     if (o.dryRun) continue;
@@ -194,7 +215,12 @@ export async function deleteImagesApp(page: Page, c: Config, app: AppConfig, o: 
     log(`      后台位置：${slot.where}${slot.localized ? ' → ' + x.lang : ''}`, 'result');
     const cleared = clearCellRecords(manifest, scan, x);
     manifest = cleared.manifest;
-    for (const rel of cleared.cleared) log(`      本地文件 ${rel} 没有删除，下次上传会再传上去；不需要的话请把它删掉`, 'result');
+    for (const rel of cleared.cleared) {
+      const inherited = filesIn(scan, x).find((f) => f.rel === rel)?.inherited;
+      log(inherited
+        ? `      这一格用的是 ${app.inherits?.key} 的图 ${rel}，下次上传会再传上去；不想让 ${app.key} 用它的话，给 ${app.key} 这一格单独放一张图`
+        : `      本地文件 ${rel} 没有删除，下次上传会再传上去；不需要的话请把它删掉`, 'result');
+    }
   }
   if (!o.dryRun && pushed) writeManifest(c, app, manifest);
   return { failed, pushed };

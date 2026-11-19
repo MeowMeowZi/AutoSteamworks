@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import YAML from 'yaml';
-import { globToRegex, type AppConfig, type Config } from '../config.js';
+import { globToRegex, type AppConfig } from '../config.js';
 import type { FieldValue } from '../partner/form.js';
 
 export type Fields = Record<string, FieldValue>;
@@ -58,6 +58,8 @@ export function keepLanguages(app: AppConfig, fields: Fields): Fields {
  *   <语言>/about.bbcode …     ← store.files 匹配的长文本，一个字段一个文件
  *   <语言>/_fields.yaml       ← 该语言其余的字段
  * 从 yaml 里删掉某个 key = 不管这个字段（不会被推送）。
+ * Demo（继承正式版的 App）的目录布局一样，但只放要覆盖的部分；没写的字段跟随正式版（见 readLocalLayers），
+ * 所以对 Demo 来说删掉某个 key = 恢复跟随正式版。
  */
 const COMMON = '_common.yaml';
 const FIELDS = '_fields.yaml';
@@ -72,11 +74,11 @@ const loadYaml = (p: string): Fields => {
     .map(([k, v]) => [k, typeof v === 'boolean' ? v : norm(String(v ?? ''))]));
 };
 
-export function hasLocal(app: AppConfig) {
-  return existsSync(join(app.storeDir, COMMON));
-}
+const yamlFile = (app: AppConfig, loc?: { lang: string }) => (loc ? join(app.storeDir, loc.lang, FIELDS) : join(app.storeDir, COMMON));
 
-export function readLocal(app: AppConfig): Fields {
+// ---- App 自己的文件（Demo 只放覆盖的部分） ----
+
+function readOwn(app: AppConfig): Fields {
   const out: Fields = { ...loadYaml(join(app.storeDir, COMMON)) };
   for (const lang of app.languages) {
     const dir = join(app.storeDir, lang);
@@ -89,7 +91,7 @@ export function readLocal(app: AppConfig): Fields {
   return out;
 }
 
-export function writeLocal(app: AppConfig, fields: Fields) {
+function writeOwn(app: AppConfig, fields: Fields) {
   mkdirSync(app.storeDir, { recursive: true });
   const common: Fields = {};
   const perLang = new Map<string, { yaml: Fields; files: Record<string, string> }>();
@@ -103,46 +105,126 @@ export function writeLocal(app: AppConfig, fields: Fields) {
     else bucket.yaml[loc.path] = v;
   }
   writeFileSync(join(app.storeDir, COMMON), dumpYaml(common));
-  for (const [lang, b] of perLang) {
+  for (const lang of app.languages) {
     const dir = join(app.storeDir, lang);
-    // 清掉旧的 .bbcode，避免线上已删除的字段在本地残留
-    if (existsSync(dir)) for (const f of readdirSync(dir).filter((f) => f.endsWith(EXT))) rmSync(join(dir, f));
+    const b = perLang.get(lang);
+    // 清掉旧的 .bbcode（线上已删除的字段、Demo 不再覆盖的字段不能在本地残留）；这种语言一个字段都没有时 _fields.yaml 也删掉
+    if (existsSync(dir)) {
+      for (const f of readdirSync(dir).filter((f) => f.endsWith(EXT))) rmSync(join(dir, f));
+      if (!b) rmSync(join(dir, FIELDS), { force: true });
+    }
+    if (!b) continue;
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, FIELDS), dumpYaml(b.yaml));
     for (const [path, text] of Object.entries(b.files)) writeFileSync(join(dir, path + EXT), text);
   }
 }
 
-// ---- 快照：上一次 pull/push 时线上的值，用于三方对比 ----
+// ---- 实际生效的本地值 ----
 
-const snapPath = (cfg: Config, app: AppConfig) => join(cfg.stateDir, 'snapshots', `${app.key}.json`);
-
-export function readSnapshot(cfg: Config, app: AppConfig): Fields | undefined {
-  const p = snapPath(cfg, app);
-  return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : undefined;
+/** 本地有商店文本（Demo 看自己的 _common.yaml，拉取时一定会写） */
+export function hasLocal(app: AppConfig) {
+  return existsSync(join(app.storeDir, COMMON));
 }
 
-export function writeSnapshot(cfg: Config, app: AppConfig, fields: Fields) {
-  const p = snapPath(cfg, app);
-  mkdirSync(join(p, '..'), { recursive: true });
-  writeFileSync(p, JSON.stringify(fields, null, 2));
+export interface LocalLayers {
+  /** 实际生效的本地值 */
+  local: Fields;
+  /** App 自己文件里的值（Demo 的覆盖） */
+  own: Fields;
+  /** 继承来的值（只有 Demo 有）：正式版的本地值里、Demo 后台表单里也有的字段，不管有没有被覆盖 */
+  inherited: Fields;
 }
 
 /**
- * 只改本地的一个字段（网页上手动编辑、还原时用）。
- * 字段必须已经在本地文件里；yaml 用 Document 修改，保留注释和顺序。
+ * 本地值分层读出来。
+ * 普通 App：只有自己的文件。
+ * Demo（app.inherits）：正式版的本地值里、Demo 快照（Demo 后台表单）里有的字段，再用 Demo 自己的覆盖盖上。
+ * Demo 没有快照（没拉取过）时不知道 Demo 表单里有哪些字段，只有覆盖。
+ */
+export function readLocalLayers(app: AppConfig): LocalLayers {
+  const own = readOwn(app);
+  let inherited: Fields = {};
+  const parent = app.inherits;
+  const snap = parent && readSnapshot(app);
+  if (parent && snap && hasLocal(parent)) {
+    const p = readOwn(parent);
+    inherited = Object.fromEntries(Object.keys(snap).filter((k) => k in p).map((k) => [k, p[k]]));
+  }
+  return { local: { ...inherited, ...own }, own, inherited };
+}
+
+export const readLocal = (app: AppConfig): Fields => readLocalLayers(app).local;
+
+/**
+ * 把拉取下来的值写到本地。
+ * 普通 App：整个重写。
+ * Demo：只写覆盖——值和正式版不同且不是空字符串，或者这个字段原来就有覆盖；其余跟随正式版。
+ * “和正式版不同”= 和正式版的本地值、正式版上次同步时的值都不同：正式版本地改了还没上传时，
+ * Demo 后台的旧值和正式版后台一样，算跟随正式版（正式版的改动之后会一起传到 Demo），不能写成覆盖把 Demo 定在旧值上。
+ */
+export function writeLocal(app: AppConfig, fields: Fields) {
+  if (!app.inherits) return writeOwn(app, fields);
+  const parent = hasLocal(app.inherits) ? readOwn(app.inherits) : {};
+  const parentBase = readSnapshot(app.inherits) ?? {};
+  const had = readOwn(app);
+  const same = (k: string, v: FieldValue) => sameFieldValue(k, v, parent[k]) || (k in parent && sameFieldValue(k, v, parentBase[k]));
+  writeOwn(app, Object.fromEntries(Object.entries(fields).filter(([k, v]) => k in had || (v !== '' && !same(k, v)))));
+}
+
+// ---- 快照：上一次 pull/push 时线上的值，用于三方对比 ----
+
+export function readSnapshot(app: AppConfig): Fields | undefined {
+  return existsSync(app.snapshotFile) ? JSON.parse(readFileSync(app.snapshotFile, 'utf8')) : undefined;
+}
+
+export function writeSnapshot(app: AppConfig, fields: Fields) {
+  mkdirSync(dirname(app.snapshotFile), { recursive: true });
+  writeFileSync(app.snapshotFile, JSON.stringify(fields, null, 2));
+}
+
+// ---- 改一个字段 ----
+
+/**
+ * 只改本地的一个字段（网页上手动编辑、还原、单独设置时用）。字段必须在实际生效的本地值里。
+ * Demo 写到自己的覆盖文件：原来是继承的，就变成单独设置。yaml 用 Document 修改，保留注释和顺序。
  */
 export function writeLocalField(app: AppConfig, key: string, value: FieldValue) {
-  if (!(key in readLocal(app))) throw new Error(`本地没有字段 ${key}`);
+  const { local, own } = readLocalLayers(app);
+  if (!(key in local)) throw new Error(`本地没有字段 ${key}`);
   const loc = splitLocalized(key);
   const file = loc ? join(app.storeDir, loc.lang, loc.path + EXT) : undefined;
-  if (file && existsSync(file)) {
+  // 已有的 .bbcode 照旧写；Demo 新加的覆盖按 store.files 决定放哪里
+  if (file && (existsSync(file) || (!(key in own) && isFile(app, loc!.path) && typeof value === 'string'))) {
     if (typeof value !== 'string') throw new Error(`${key} 是文本字段`);
+    mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, value);
     return;
   }
-  const yamlPath = loc ? join(app.storeDir, loc.lang, FIELDS) : join(app.storeDir, COMMON);
-  const doc = YAML.parseDocument(readFileSync(yamlPath, 'utf8'));
+  const yamlPath = yamlFile(app, loc);
+  mkdirSync(dirname(yamlPath), { recursive: true });
+  const parsed = YAML.parseDocument(existsSync(yamlPath) ? readFileSync(yamlPath, 'utf8') : '');
+  // 空文件或 {}：换成新的文档，免得写成一行的 { a: b } 格式
+  const empty = !parsed.contents || (YAML.isMap(parsed.contents) && !parsed.contents.items.length);
+  const doc: YAML.Document = empty ? new YAML.Document({}) : parsed;
   doc.set(loc ? loc.path : key, value);
+  writeFileSync(yamlPath, doc.toString({ lineWidth: 0 }));
+}
+
+/** Demo 自己设置了这个字段（有覆盖） */
+export const isOverridden = (app: AppConfig, key: string) => !!app.inherits && key in readOwn(app);
+
+/** Demo：删掉一个字段的覆盖，恢复跟随正式版 */
+export function clearOverride(app: AppConfig, key: string) {
+  if (!app.inherits) throw new Error('只有继承了正式版的 App（Demo）才能恢复继承');
+  const { own, inherited } = readLocalLayers(app);
+  if (!(key in inherited)) throw new Error(`正式版本地没有 ${key}，不能恢复继承`);
+  if (!(key in own)) return;
+  const loc = splitLocalized(key);
+  const file = loc && join(app.storeDir, loc.lang, loc.path + EXT);
+  if (file && existsSync(file)) { rmSync(file); return; }
+  const yamlPath = yamlFile(app, loc);
+  const doc = YAML.parseDocument(readFileSync(yamlPath, 'utf8'));
+  doc.delete(loc ? loc.path : key);
   writeFileSync(yamlPath, doc.toString({ lineWidth: 0 }));
 }

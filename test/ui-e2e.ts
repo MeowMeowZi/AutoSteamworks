@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
+import { chromium } from 'playwright-core';
 import { start } from './mock-partner.js';
 import { png } from './png.js';
 import YAML from 'yaml';
@@ -109,8 +110,8 @@ try {
 
   const rules = await get('/api/rules?project=' + encodeURIComponent(c2));
   assert.equal(rules.exists, true);
-  assert.equal((await rawPost('/api/rules', { project: c2, text: rules.text + '\n- 术语：邪神 = Evil God\n' })).status, 200);
-  assert.match(readFileSync(join(g2, 'STEAM_RULES.md'), 'utf8'), /邪神 = Evil God/);
+  assert.equal((await rawPost('/api/rules', { project: c2, text: rules.text + '\n- 术语：宝石 = Gem\n' })).status, 200);
+  assert.match(readFileSync(join(g2, 'STEAM_RULES.md'), 'utf8'), /宝石 = Gem/);
   assert.equal((await get('/api/rules?project=' + encodeURIComponent(c2))).outdated, false, '只改了风格一节不算旧版');
 
   // 复制给 AI：项目现状 + 完整规则
@@ -118,7 +119,7 @@ try {
   assert.match(prompt, /appid 2000/);
   assert.match(prompt, /还没从后台拉取/);
   assert.match(prompt, /-c ".*steam\.config\.yaml" check/);
-  assert.match(prompt, /邪神 = Evil God/, '带上规则全文');
+  assert.match(prompt, /宝石 = Gem/, '带上规则全文');
   assert.match(prompt, /## 类型与标签向导/);
   const catalogPath = prompt.match(/标签向导候选词表（只读，按题组查简中名称）：(.+)/)?.[1];
   assert.ok(catalogPath);
@@ -164,11 +165,13 @@ try {
 
   let a = await game();
   assert.equal(a.pulled, false);
-
   // 网页上拉取
   await runJob({ action: 'pull' });
   a = await game();
   assert.equal(a.pulled, true);
+  const devKey = 'app[game][developers][0][name]';
+  assert.equal((await post('/api/field', { app: 'game', key: devKey, value: '测试署名' })).status, 200);
+  assert.equal(a.common.find((item: any) => item.key === 'app[game][publishers][0]').local, '已有发行商');
   assert.equal(field(a, 'english', 'about').local, 'Old about\n[b]bold[/b]');
   assert.equal(field(a, 'english', 'about').edited, false);
 
@@ -217,7 +220,8 @@ try {
   assert.equal(field(a, 'english', 'about').remote.kind, 'local');
 
   // 只上传勾选的一个字段，演练不写入
-  await runJob({ action: 'push', only: ['app[content][about][english]'], dryRun: true });
+  assert.equal((await post('/api/run', { app: 'game', action: 'upload', fields: [], images: [] })).status, 400);
+  await runJob({ action: 'upload', fields: ['app[content][about][english]'], images: [], dryRun: true });
   assert.equal(remote()['app[content][about][english]'], 'Old about\n[b]bold[/b]');
   await runJob({ action: 'push', only: ['app[content][about][english]'] });
   assert.equal(remote()['app[content][about][english]'].replace(/\r\n/g, '\n'), 'New about\n[b]bold[/b]');
@@ -301,7 +305,40 @@ try {
   const img = await asset('store/english/header.png');
   assert.equal(img.headers.get('content-type'), 'image/png');
 
-  await runJob({ action: 'assets', only: ['store/english/small.png'] });
+  // 从两个页签分别勾选，预览和一次确认都使用同一份清单。
+  const shortKey = 'app[content][short_description][english]';
+  const browser = await chromium.launch({ channel: 'msedge' });
+  try {
+    const page = await browser.newPage();
+    await page.goto(ui.url);
+    const bar = page.locator('#actionbar');
+    await bar.waitFor();
+    assert.match(await bar.innerText(), /处文本、2 张图片/);
+    await bar.getByText('全不选').click();
+    assert.ok(await bar.getByRole('button', { name: '一键上传到后台草稿' }).isDisabled());
+    await page.locator(`[data-pick="${shortKey}"]`).check();
+    await page.locator('button[data-tab="images"]').click();
+    await page.locator('[data-pick="asset:store/english/small.png"]').check();
+    assert.match(await bar.innerText(), /1 处文本、1 张图片/);
+    await bar.getByRole('button', { name: '预览将要上传的内容' }).click();
+    await page.locator('.result.dry').waitFor();
+    const preview = await page.locator('.result.dry').innerText();
+    assert.match(preview, /english\/short_description/);
+    assert.match(preview, /small\.png/);
+    assert.equal(remote()[shortKey], '');
+    assert.equal(srv.uploads.length, 0);
+    await page.locator('button[data-tab="text"]').click();
+    const confirmations: string[] = [];
+    page.on('dialog', async (dialog) => { confirmations.push(dialog.message()); await dialog.accept(); });
+    await bar.getByRole('button', { name: '一键上传到后台草稿' }).click();
+    await page.locator('.result.ok').getByText('上传到后台草稿完成').waitFor();
+    assert.equal(confirmations.length, 1);
+    assert.match(confirmations[0], /1 处文本、1 张图片/);
+    assert.equal(remote()[shortKey], 'Lazy god idles.');
+    assert.equal(remote()[devKey], '', '没勾选的文本继续留在本地');
+  } finally {
+    await browser.close();
+  }
   assert.deepEqual(srv.uploads.map((u) => u.filename), ['small.png']);
   a = await game();
   assert.equal(cell(a, 'small_capsule', 'english').status, 'synced', '上传后自动读取后台状态并核对');
@@ -324,6 +361,49 @@ try {
   // 字段显示成后台上的名字
   assert.equal(field(a, 'english', 'short_description').info.label, '简短描述');
   assert.equal(field(a, 'english', 'short_description').info.tab, '描述');
+
+  // ---- Demo：查找 → 添加 → 拉取 → 继承标记、单独设置 / 恢复继承、继承来的图 ----
+  await runJob({ action: 'find-demos', term: '示例冒险' }); // 名称是“测试游戏”，模拟后台里搜不到，手动填关键词
+  const fr = (await stateOf()).lastResult;
+  assert.ok(fr.ok && fr.action === 'find-demos', JSON.stringify(fr));
+  assert.deepEqual(fr.demos.candidates.map((x: any) => [x.appid, x.itemid, x.suggested]), [[200, 1200, false]], '名称不以正式版名称开头的不默认选中');
+  r = await post('/api/demo/add', { app: 'game', appid: 200, itemid: 1200, name: '测试游戏 Demo' });
+  const added = await r.json();
+  assert.equal(added.key, 'demo', JSON.stringify(added));
+  assert.ok(added.lines.some((l: string) => l.includes('“关联的 Demo”填上了 1200')), JSON.stringify(added.lines));
+  a = await game();
+  const rel = a.common.find((f: any) => f.key === 'app[related_items][demos][0][itemid]');
+  assert.deepEqual([rel.local, rel.edited], ['1200', true], '正式版本地填上 Demo 的 itemid，等上传');
+  assert.equal((await post('/api/demo/add', { app: 'game', appid: 200, itemid: 1200 })).status, 500, '同一个 Demo 不能加两次');
+
+  await runJob({ action: 'pull', app: 'demo' });
+  const demoState = async () => (await stateOf()).current.apps.find((x: any) => x.key === 'demo');
+  let dm = await demoState();
+  assert.deepEqual([dm.inherits, dm.pulled, (await game()).hasDemo], ['game', true, true]);
+  assert.equal(field(dm, 'english', 'sysreqs.windows.min.processor').inherit, 'inherited', '后台空着的字段跟随正式版');
+  assert.equal(dm.common.find((item: any) => item.key === devKey).inherit, 'inherited');
+  assert.equal(field(dm, 'english', 'about').inherit, 'overridden', '正式版已经上传了新的关于，Demo 后台还是旧的：和正式版不同，拉取时写成覆盖');
+  assert.equal(dm.common.find((f: any) => f.key === 'app[name]').inherit, 'overridden', 'Demo 的名称和正式版不同，单独设置');
+  assert.equal((await post('/api/field/override', { app: 'demo', key: 'app[content][sysreqs][windows][min][processor][english]', on: true })).status, 200);
+  assert.equal(field(await demoState(), 'english', 'sysreqs.windows.min.processor').inherit, 'overridden');
+  assert.equal((await post('/api/field/override', { app: 'demo', key: 'app[content][sysreqs][windows][min][processor][english]', on: false })).status, 200);
+  assert.equal(field(await demoState(), 'english', 'sysreqs.windows.min.processor').inherit, 'inherited');
+
+  const dcell = (x: any, slot: string, lang: string) => x.images.slots.find((s: any) => s.id === slot).cells[lang];
+  dm = await demoState();
+  const inh = dcell(dm, 'header', 'english').local;
+  assert.ok(inh?.inherited && inh.rel.startsWith('../../game/assets/'), JSON.stringify(inh));
+  assert.match(dcell(dm, 'header', 'english').text, /^继承自正式版（game）：待上传/);
+  const dasset = (p: string) => fetch(origin + `/api/asset?project=${encodeURIComponent(P)}&app=demo&rel=${encodeURIComponent(p)}`);
+  assert.equal((await dasset(inh.rel)).status, 200, '能读正式版目录里继承来的图');
+  assert.equal((await dasset('../../../steam.config.yaml')).status, 404, '不能读两个 assets 目录以外的文件');
+  r = await fetch(origin + `/api/images/drop?project=${encodeURIComponent(P)}&app=demo&name=dh.png&cell=${encodeURIComponent('header|english')}`,
+    { method: 'POST', headers: { origin }, body: new Uint8Array(png(920, 430, 77)) });
+  assert.equal(r.status, 200);
+  assert.equal(dcell(await demoState(), 'header', 'english').local.inherited, undefined, '拖进去就是 Demo 单独设置');
+  r = await post('/api/images/restore', { app: 'demo', cell: 'header|english' });
+  assert.match((await r.json()).line, /恢复用正式版的图/);
+  assert.ok(dcell(await demoState(), 'header', 'english').local.inherited);
 
   const genres = ['rgGenres[3]', 'rgGenres[4]'];
   for (const key of genres) remote()[key] = '';

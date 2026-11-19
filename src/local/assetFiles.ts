@@ -15,6 +15,8 @@ import { STEAM_LANGS } from './storeFiles.js';
 
 export interface LocalAsset extends AssetUpload {
   hash: string;
+  /** Demo 用的正式版的图（见 imageCells.ts 的 scanCells） */
+  inherited?: boolean;
 }
 
 const isImage = (f: string) => ASSET_EXTS.includes(f.split('.').pop()!.toLowerCase());

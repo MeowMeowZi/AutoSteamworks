@@ -11,6 +11,7 @@ import { start } from './mock-partner.js';
 const run = promisify(execFile);
 const srv = await start();
 const ws = mkdtempSync(join(tmpdir(), 'autosw-'));
+process.env.AUTOSW_HOME = join(ws, 'home');
 writeFileSync(join(ws, 'steam.config.yaml'), `
 browser: { profileDir: .autosw/profile }  # 不用真实的共享登录
 partner: { storeEditUrl: "${srv.url}/admin/game/editbyappid/{appid}", delayMs: 0 }
@@ -40,15 +41,15 @@ try {
   assert.ok(!existsSync(join(g, 'japanese')), '未配置的语言不拉取');
   assert.deepEqual(yaml(join(g, '_common.yaml')), {
     'app[broadcast][chat_visibility]': 'hide', 'app[classification][primary_genre]': '', 'app[content][links][website]': '',
-    'app[name]': '邪神今天也在挂机',
-    'app[platforms][win]': '1', 'tags[][=coop]': true, 'tags[][=pvp]': false,
+    'app[game][developers][0][name]': '', 'app[game][publishers][0]': '已有发行商', 'app[name]': '示例冒险',
+    'app[platforms][win]': '1', 'app[related_items][demos][0][itemid]': '', 'tags[][=coop]': true, 'tags[][=pvp]': false,
   }, '内部字段（sessionid、serialized_app_data、*_compl…）被忽略');
   assert.ok(!('app[name]' in yaml(join(dir('demo'), '_common.yaml'))), 'ignoreFields 生效');
 
   // 本地修改：多语言长文本 + 系统要求 + 下拉 + 单选 + 复选框；about 故意用 CRLF
   writeFileSync(join(g, 'english', 'about.bbcode'), 'New about\r\n[h1]Hi[/h1]');
   writeFileSync(join(g, 'english', 'short_description.bbcode'), 'An idle game about a lazy god.');
-  writeFileSync(join(g, 'schinese', 'short_description.bbcode'), '一款关于摸鱼邪神的放置游戏。');
+  writeFileSync(join(g, 'schinese', 'short_description.bbcode'), '一款探索地图和收集宝石的游戏。');
   patchYaml(join(g, 'schinese', '_fields.yaml'), { 'sysreqs.windows.min.processor': 'Intel i3' });
   patchYaml(join(g, '_common.yaml'), { 'app[classification][primary_genre]': '23', 'app[broadcast][chat_visibility]': 'show', 'tags[][=pvp]': true });
   const st = await cli('status'); console.log(st);
@@ -64,12 +65,12 @@ try {
   const d = remote();
   assert.equal(crlf(d['app[content][about][english]']), 'New about\n[h1]Hi[/h1]');
   assert.equal(d['app[content][short_description][english]'], 'An idle game about a lazy god.', '没被界面的 submit 处理覆盖');
-  assert.equal(d['app[content][short_description][schinese]'], '一款关于摸鱼邪神的放置游戏。');
+  assert.equal(d['app[content][short_description][schinese]'], '一款探索地图和收集宝石的游戏。');
   assert.equal(d['app[content][sysreqs][windows][min][processor][schinese]'], 'Intel i3');
   assert.equal(d['app[classification][primary_genre]'], '23');
   assert.equal(d['app[broadcast][chat_visibility]'], 'show');
   assert.equal(d['tags[]'], 'coop,pvp');
-  assert.equal(d['app[name]'], '邪神今天也在挂机', '没改的字段保持原值');
+  assert.equal(d['app[name]'], '示例冒险', '没改的字段保持原值');
   assert.equal(srv.lastPost()!['app[content][about][japanese]'], '', '未配置语言的字段按原值一起提交，不丢失');
   assert.match(await cli('status', 'game'), /game: 无改动/);
 

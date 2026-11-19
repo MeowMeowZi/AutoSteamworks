@@ -3,7 +3,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { existsSync, readFileSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import { loadConfig, readSettings, selectApps, writeSettings, type AppConfig, type Config } from '../config.js';
-import { STEAM_LANGS, writeLocalField } from '../local/storeFiles.js';
+import { clearOverride, readLocal, STEAM_LANGS, writeLocalField } from '../local/storeFiles.js';
+import { addDemo } from '../demo.js';
+import { STANDALONE_DEMO } from '../ops.js';
 import { readTextState, textView } from '../textState.js';
 import { ACTIONS } from '../runner.js';
 import { createJobs, type RunReq } from './jobs.js';
@@ -11,7 +13,7 @@ import { createWatch } from './watch.js';
 import { readMeta } from '../partner/meta.js';
 import { LANG_NAMES } from '../fieldInfo.js';
 import { imageBoard } from './images.js';
-import { addToInbox, describeItem, placeImage, sortInbox } from '../local/inbox.js';
+import { addToInbox, describeItem, placeImage, restoreInherited, sortInbox } from '../local/inbox.js';
 import { addProject, createProjectByAppid, projectsRoot, listProjects, projectSummary, removeProject, requireProject } from '../projects.js';
 import { initProject } from '../projectInit.js';
 import { aiPrompt, readRules, upgradeRules, writeRules } from '../aiRules.js';
@@ -34,14 +36,21 @@ export async function startUi(o: UiOptions) {
   const openProject = o.open ? addProject(o.open).config : undefined;
 
   function appState(c: Config, project: string, app: AppConfig) {
-    const text = readTextState(c, app);
+    const text = readTextState(app);
     const remote = jobs.remoteCheck(project, app.key);
     const meta = readMeta(c, app);
     const view = textView(text, remote?.changes, meta?.labels);
     const images = imageBoard(c, app, meta);
     const count = (level: 'error' | 'warn') => text.issues.filter((i) => i.level === level).length + images.issues.filter((i) => i.level === level).length;
+    const standalone = text.local[STANDALONE_DEMO];
     return {
       key: app.key, appid: app.appid, name: app.name, languages: app.languages, pulled: text.pulled,
+      /** Demo：继承的正式版的 key */
+      inherits: app.inherits?.key,
+      /** 正式版：有 Demo 继承它 */
+      hasDemo: c.apps.some((a) => a.inherits === app),
+      /** Demo 没有独立商店页（standalone_demo_page 不是 1）。只提示，仍然可以同步 */
+      noStandalonePage: !!app.inherits && standalone !== undefined && String(standalone) !== '1',
       storeDir: app.storeDir, assetsDir: app.assets.dir,
       common: view.common,
       localized: view.localized,
@@ -125,10 +134,11 @@ export async function startUi(o: UiOptions) {
           watch.attach(res);
           return;
         case 'GET /api/asset': {
+          // rel 相对 App 的 assets 目录；Demo 继承来的图在正式版的 assets 目录里（../../game/assets/...）
           const { app } = appOf(q('project'), q('app'));
-          const root = resolve(app.assets.dir);
-          const p = resolve(root, q('rel') ?? '');
-          if (!p.startsWith(root + sep) || !existsSync(p)) return json(res, 404, { error: 'not found' });
+          const p = resolve(app.assets.dir, q('rel') ?? '');
+          const roots = [app.assets.dir, app.inherits?.assets.dir].filter((d): d is string => !!d).map((d) => resolve(d));
+          if (!roots.some((root) => p.startsWith(root + sep)) || !existsSync(p)) return json(res, 404, { error: 'not found' });
           const mime: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
           res.writeHead(200, { 'content-type': mime[extname(p).toLowerCase()] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
           return res.end(readFileSync(p));
@@ -145,7 +155,7 @@ export async function startUi(o: UiOptions) {
       if (url.pathname === '/api/images/drop') {
         // 网页拖进来的图片，请求体是文件本身；不带 cell 就放进待分类，带 cell（格子 key，例如 header|schinese）就直接放到那一格
         const { app } = appOf(q('project'), q('app'));
-        if (jobs.busyWith('assets')) return json(res, 409, { error: '正在上传图片，等它结束再放新图片' });
+        if (jobs.uploadingImages()) return json(res, 409, { error: '正在上传图片，等它结束再放新图片' });
         const bytes = await readRaw(req, 50 * 1024 * 1024);
         const name = q('name') ?? '';
         const cell = q('cell');
@@ -197,10 +207,31 @@ export async function startUi(o: UiOptions) {
           touched();
           return json(res, 200, { ok: true });
         }
+        case '/api/field/override': {
+          // Demo：on = 单独设置（把现在的值写成覆盖），否则恢复继承
+          const { app } = appOf(b.project, b.app);
+          if (b.on) writeLocalField(app, b.key, readLocal(app)[b.key]);
+          else clearOverride(app, b.key);
+          touched();
+          return json(res, 200, { ok: true });
+        }
+        case '/api/images/restore': {
+          // Demo 的一格恢复用正式版的图：Demo 自己的图挪到 已替换/
+          const { app } = appOf(b.project, b.app);
+          if (jobs.uploadingImages()) return json(res, 409, { error: '正在上传图片，等它结束再改' });
+          const line = restoreInherited(app, String(b.cell ?? ''));
+          touched();
+          return json(res, 200, { line });
+        }
+        case '/api/demo/add': {
+          const r = addDemo(requireProject(b.project), String(b.app ?? ''), { appid: b.appid, itemid: b.itemid, name: b.name });
+          touched();
+          return json(res, 200, r);
+        }
         case '/api/images/sort': {
           // 只在本地移动文件，不碰后台，不占用任务；只是别在上传图片的时候挪文件
           const { app } = appOf(b.project, b.app);
-          if (jobs.busyWith('assets')) return json(res, 409, { error: '正在上传图片，等它结束再整理' });
+          if (jobs.uploadingImages()) return json(res, 409, { error: '正在上传图片，等它结束再整理' });
           const items = sortInbox(app);
           touched();
           return json(res, 200, { items, lines: items.map(describeItem) });
@@ -210,6 +241,13 @@ export async function startUi(o: UiOptions) {
           if (!ACTIONS.includes(r.action)) return json(res, 400, { error: '未知操作' });
           const busy = jobs.current();
           if (busy) return json(res, 409, { error: `正在执行 ${busy.action}，请等它结束` });
+          if (r.action === 'upload') {
+            const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === 'string' && s.length > 0);
+            if (!strings(r.fields) || !strings(r.images) || (r.overwriteConflicts !== undefined && !strings(r.overwriteConflicts))) {
+              return json(res, 400, { error: '上传清单格式有误，请刷新后重试' });
+            }
+            if (!r.fields.length && !r.images.length) return json(res, 400, { error: '请先勾选要上传的改动' });
+          }
           if (r.action !== 'login') appOf(r.project, r.app); // 先校验项目和 App
           else if (r.project) requireProject(r.project);
           // 登录不需要项目配置好：没配置时用默认的共用登录目录

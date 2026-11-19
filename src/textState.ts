@@ -1,9 +1,9 @@
 // App 文本状态：一个 App 的本地商店文本、上次同步的快照、本地改动、规则检查，以及网页上每个字段的视图。
 // status / check / 网页都只从这里取，不要自己读快照、比较字段或判断“拉取过没有”。
 import { diffChars, diffLines } from 'diff';
-import type { AppConfig, Config } from './config.js';
+import type { AppConfig } from './config.js';
 import type { FieldValue } from './partner/form.js';
-import { hasLocal, norm, readLocal, readSnapshot, splitLocalized, type Fields } from './local/storeFiles.js';
+import { hasLocal, norm, readLocalLayers, readSnapshot, splitLocalized, type Fields } from './local/storeFiles.js';
 import { lint, type LintIssue } from './lint.js';
 import { localEdits, type Change, type ChangeKind } from './sync.js';
 import { describeField, fieldShape, type FieldInfo, type FieldShape } from './fieldInfo.js';
@@ -13,7 +13,11 @@ export interface TextState {
   pulled: boolean;
   /** 本地有商店文本文件（可能是手写的，没有快照） */
   hasLocal: boolean;
+  /** 实际生效的本地值（Demo 已经合上了继承的值） */
   local: Fields;
+  /** Demo：继承来的字段（没有覆盖、值来自正式版）和覆盖了正式版的字段。普通 App 都是空的 */
+  inherited: Set<string>;
+  overridden: Set<string>;
   /** 上次同步时的快照；没有快照时算不出改动 */
   base?: Fields;
   /** 本地相对快照改了哪些字段；没有快照时为空 */
@@ -22,14 +26,18 @@ export interface TextState {
   issues: LintIssue[];
 }
 
-export function readTextState(c: Config, app: AppConfig): TextState {
+export function readTextState(app: AppConfig): TextState {
   const has = hasLocal(app);
-  const local = has ? readLocal(app) : {};
-  const base = readSnapshot(c, app);
+  const layers = has ? readLocalLayers(app) : { local: {}, own: {}, inherited: {} };
+  const local = layers.local;
+  const base = readSnapshot(app);
+  const inh = Object.keys(layers.inherited);
   return {
     pulled: has && !!base,
     hasLocal: has,
     local,
+    inherited: new Set(inh.filter((k) => !(k in layers.own))),
+    overridden: new Set(inh.filter((k) => k in layers.own)),
     base,
     edits: base ? localEdits(local, base) : [],
     issues: has ? lint(app, local) : [],
@@ -52,6 +60,8 @@ export interface FieldView {
   base?: FieldValue;
   /** 本地相对快照改过 */
   edited: boolean;
+  /** Demo：inherited = 值继承自正式版；overridden = 单独设置了（可以恢复继承）。普通 App 和 Demo 独有的字段没有 */
+  inherit?: 'inherited' | 'overridden';
   info: FieldInfo;
   /** 本地化字段的语言 */
   lang?: string;
@@ -87,6 +97,7 @@ export function textView(s: TextState, remote?: Map<string, Change>, labels?: Re
     const loc = splitLocalized(key);
     const v: FieldView = {
       key, local: l, base: b, edited,
+      inherit: s.inherited.has(key) ? 'inherited' : s.overridden.has(key) ? 'overridden' : undefined,
       info: describeField(key, labels?.[key.replace(/\[=.*\]$/, '')]),
       lang: loc?.lang,
       shape: fieldShape(key, has),

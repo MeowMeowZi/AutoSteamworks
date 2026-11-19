@@ -98,7 +98,7 @@ program.command('status [apps...]').description('（离线）列出本地相对�
   .action((keys: string[]) => {
     const c = cfg();
     for (const app of selectApps(c, keys)) {
-      const t = readTextState(c, app);
+      const t = readTextState(app);
       if (!t.pulled) { console.log(`${app.key}: 尚未 pull`); continue; }
       console.log(`${app.key}: ${t.edits.length ? t.edits.length + ' 处改动' : '无改动'}`);
       t.edits.forEach((k) => console.log('  ↑ ' + display(k)));
@@ -123,7 +123,7 @@ program.command('check [apps...]').description('（离线）按规则检查本�
     const c = cfg();
     let errors = 0;
     for (const app of selectApps(c, keys)) {
-      const t = readTextState(c, app);
+      const t = readTextState(app);
       if (!t.hasLocal) { console.log(`${app.key}: 尚未 pull`); continue; }
       const issues = t.issues;
       const edits = t.base ? `${t.edits.length} 处未上传的改动` : '没有快照，算不出未上传的改动（先 pull 一次）';

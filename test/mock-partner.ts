@@ -16,12 +16,25 @@ const uploads: Upload[] = [];
 const deletes: string[] = [];
 /** 和真实后台一样：serialized_app_data.assets[<类型 key>].image[<语言>] = '<hash>/<文件名>' */
 const assets: Record<string, Record<string, unknown>> = {};
+const relatedDemos: Record<string, string[]> = {};
 
-const fresh = (): Row => {
+/** Demo 的 itemid（appid 200 → 1200）。和真实后台一样，Demo 的表单字段比正式版少（没有直播设置），多一个 standalone_demo_page */
+export const DEMO_ITEMS = ['1200'];
+const isDemo = (id: string) => DEMO_ITEMS.includes(id);
+/** suggest/Demo 能搜到的 Demo：itemid → 名称 ( appid )[ (本地化名)] */
+const SUGGEST_DEMO: Record<string, string> = {
+  1200: '示例冒险 Demo ( 200 )',
+  1300: 'Other Game Demo ( 300 ) (别的游戏 Demo)',
+};
+
+const fresh = (id: string): Row => {
   const r: Row = {
-    'app[name]': '邪神今天也在挂机', 'app[content][links][website]': '', 'app[platforms][win]': '1',
-    'app[classification][primary_genre]': '', 'app[broadcast][chat_visibility]': 'hide', 'tags[]': 'coop',
+    'app[name]': isDemo(id) ? '示例冒险 Demo' : '示例冒险', 'app[content][links][website]': '', 'app[platforms][win]': '1',
+    'app[classification][primary_genre]': '', 'tags[]': 'coop',
+    'app[game][developers][0][name]': '', 'app[game][publishers][0]': '已有发行商',
   };
+  if (isDemo(id)) r['app[content][standalone_demo_page]'] = '1';
+  else r['app[broadcast][chat_visibility]'] = 'hide';
   for (const l of LANGS) {
     r[`app[content][about][${l}]`] = l === 'english' ? 'Old about\n[b]bold[/b]' : '';
     r[`app[content][short_description][${l}]`] = '';
@@ -29,7 +42,7 @@ const fresh = (): Row => {
   }
   return r;
 };
-const get = (id: string) => (db[id] ??= fresh());
+const get = (id: string) => (db[id] ??= fresh(id));
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 
 /** 和真实后台一样：每张已上传的图旁边有一个“删除”链接，参数是要清空的字段 */
@@ -48,24 +61,27 @@ function deleteLinks(id: string) {
 function page(id: string) {
   const d = get(id);
   const hidden = Object.entries(d)
-    .filter(([k]) => k.startsWith('app[content]') || k === 'app[platforms][win]' || /^rgGenres\[\d+\]$/.test(k))
+    .filter(([k]) => k.startsWith('app[content]') || k.startsWith('app[game]') || k === 'app[platforms][win]' || /^rgGenres\[\d+\]$/.test(k))
     .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join('\n');
   const tags = d['tags[]'].split(',');
+  const demos = relatedDemos[id] ?? [];
+  const related_items = demos.length ? { demos: demos.map((itemid) => ({ itemid })) } : undefined;
   return `<!doctype html><html><body>
-  <form><select name="publisher"><option>222306</option></select></form>
+  <form><select name="publisher"><option>101</option></select></form>
   <form id="gameform" method="post" action="/admin/game/save/${id}" enctype="multipart/form-data">
     <input type="hidden" name="sessionid" value="sess">
-    <input type="hidden" name="serialized_app_data" value="${esc(JSON.stringify({ itemid: id, assets: assets[id] ?? {} }))}">
+    <input type="hidden" name="serialized_app_data" value="${esc(JSON.stringify({ itemid: id, assets: assets[id] ?? {}, related_items }))}">
     <input type="hidden" name="activetab" value="tab_description">
     <input type="text" name="app[name]" value="${esc(d['app[name]'])}">
     <input type="text" name="app[content][links][website]_compl" value="">
     <select name="app[classification][primary_genre]"><option value=""></option><option value="1">Action</option><option value="23">Indie</option></select>
-    <input type="radio" name="app[broadcast][chat_visibility]" value="hide"${d['app[broadcast][chat_visibility]'] === 'hide' ? ' checked' : ''}>
-    <input type="radio" name="app[broadcast][chat_visibility]" value="show"${d['app[broadcast][chat_visibility]'] === 'show' ? ' checked' : ''}>
+    ${isDemo(id) ? '' : `<input type="radio" name="app[broadcast][chat_visibility]" value="hide"${d['app[broadcast][chat_visibility]'] === 'hide' ? ' checked' : ''}>
+    <input type="radio" name="app[broadcast][chat_visibility]" value="show"${d['app[broadcast][chat_visibility]'] === 'show' ? ' checked' : ''}>`}
     ${['coop', 'pvp'].map((t) => `<input type="checkbox" name="tags[]" value="${t}"${tags.includes(t) ? ' checked' : ''}>`).join('')}
     <textarea id="app_content_short_description__textarea"></textarea>
     <input type="file" name="screenshot">
     ${hidden}
+    ${isDemo(id) ? '' : `<input type="hidden" name="app[related_items][demos][${demos.length}][itemid]" value="">`}
     <input type="submit" id="submitBtn" value="保存">
   </form>
   <input type="hidden" id="activetab" name="activetab" value="tab_graphicalassets">
@@ -114,6 +130,12 @@ export function start(port = 0) {
     let m = url.pathname.match(/^\/admin\/game\/editbyappid\/(\d+)$/);
     if (m?.[1] === '999') return res.writeHead(302, { Location: `/?goto=${encodeURIComponent(url.pathname)}` }).end();
     if (m) return res.writeHead(302, { Location: `/admin/game/edit/${Number(m[1]) + 1000}?activetab=tab_description` }).end();
+    if (url.pathname === '/admin/store/suggest/Demo') {
+      const term = (url.searchParams.get('term') ?? '').toLowerCase();
+      const li = Object.entries(SUGGEST_DEMO).filter(([, t]) => t.toLowerCase().includes(term))
+        .map(([item, t]) => `<li id="suggest_Demo_${item}" class="app_Demo">${esc(t)}</li>`);
+      return res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(`<ul>${li.join('\n')}</ul>`);
+    }
     m = url.pathname.match(/^\/admin\/game\/edit\/(\d+)$/);
     if (m) return res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(page(m[1]));
     m = url.pathname.match(/^\/admin\/game\/save\/(\d+)$/);
@@ -155,6 +177,9 @@ export function start(port = 0) {
         return res.writeHead(302, { Location: `/admin/game/edit/${m[1]}?${msg}&activetab=tab_graphicalassets` }).end();
       }
       const d = get(m[1]);
+      const demos = relatedDemos[m[1]] ??= [];
+      const itemid = form.get(`app[related_items][demos][${demos.length}][itemid]`);
+      if (!isDemo(m[1]) && typeof itemid === 'string' && Object.hasOwn(SUGGEST_DEMO, itemid)) demos.push(itemid);
       lastPost = {};
       for (const [k, v] of form) if (typeof v === 'string') lastPost[k] = v;
       for (const k of Object.keys(d)) {

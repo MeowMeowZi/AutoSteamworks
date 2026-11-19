@@ -6,7 +6,7 @@
 技术栈：TypeScript + playwright-core。直接驱动系统自带的 Edge（`channel: msedge`），用持久化的浏览器会话保持登录。
 Steamworks **没有**修改商店页面的官方 API，所以一切都靠操作后台网页完成；只有构建上传走官方的 SteamPipe（steamcmd）。
 
-## 当前进度（截至 2026-11-11）
+## 当前进度（截至 2026-11-13）
 
 | 功能 | 状态 |
 |---|---|
@@ -22,20 +22,15 @@ Steamworks **没有**修改商店页面的官方 API，所以一切都靠操作�
 | 图片收件箱：图片丢进 `assets/待分类/`，按尺寸判断位置、按文件名判断语言（没写算 english；920x430 文件名带 library/库 才算库形象图片），网页上点“整理”或 `sort-images [-n]`；同位置旧图挪到 `assets/已替换/`。网页上可以直接拖拽：拖到空白处 = 放进待分类并自动整理，拖到表格某一格 = 直接放到那个位置和语言（尺寸不符拒绝）；也有“选择图片…”按钮。接口 `POST /api/images/drop`，请求体就是文件 | ✅ 离线测试 + 网页接口测试通过；拖拽事件在无头 Edge 里实测过 |
 | 拉取时跟随后台语言：后台“支持的语言”里勾了“界面”、且有商店文本的语言（STEAM_LANGS），拉取时自动加进 steam.config.yaml 并一起拉下来（App 有自己的 languages 就加到那里；项目只有一个 App 时加到顶层；否则给这个 App 单独写一份）。只加不删 | ✅ 模拟后台测试通过；真实后台还没跑过 |
 | 未登录检测：后台把请求跳回首页（`/?goto=...`）时，没有 `steamLoginSecure` 就提示登录，有就提示可能没权限 / 机构不对 | ✅ 真实后台遇到过（新项目用的共享登录还没登录） |
+| Demo：同一个项目里的第二个 App（`inherits: game`）。文本 = 正式版的本地值（只取 Demo 表单里有的字段）+ Demo 自己的覆盖；拉取 Demo 只把和正式版不同的值写成覆盖；图片没放的格子用正式版的；网页上“设置 → Demo”查找（`find-demos`，只读）并添加，字段和图片格子可以“单独设置 / 恢复继承”。命令行不指定 App 时正式版先 | 离线、模拟后台和网页接口测试覆盖查找、继承、覆盖及草稿上传 |
 | `build`：生成 VDF + 调用 steamcmd | ⚠ 已实现但从未真实运行；配置里 `steamcmd.user` 还是占位值，`builds/windows` 目录也不存在 |
 | `push --publish`：发布 | ⏳ 未做，发布页面还没探查过 |
-| 成就 | ⏳ 未做（后台地址 `https://partner.steamgames.com/apps/achievements/5596340`） |
+| 成就 | ⏳ 未做（后台地址 `https://partner.steamgames.com/apps/achievements/<appid>`） |
 | 活动 / 公告、预告片 | ⏳ 未做 |
 | 商店页上的“下载本地化 / 上传本地化”（官方的 JSON/CSV 批量导入导出） | ⏳ 没研究，可以作为多语言文本的另一种同步方式 |
 
-**后台里现在有两项测试数据**，正式发布前要替换掉：schinese 简短描述是“测试测试”，schinese 形象图片是 `测试.png`。
+“机构权限”提示见 issue #1。
 代码已推送到公开仓库 https://github.com/MeowMeowZi/AutoSteamworks（main 分支）。`apps/` 和 `steam.config.yaml` 是这款游戏自己的内容，已加进 gitignore，不进工具仓库。
-
-## 用户的项目
-
-- 游戏《邪神今天也在挂机》：appid `5596340`，depot `5596341`，商店 itemid `1436230`。
-- 账号属于两个机构，当前选中的是 222306（Shanghai XinMeng）。
-- 同步语言：english、schinese。用户已确认截图适合所有年龄（`screenshotsAllAges: true`），宣传图内容也符合 Steam 规定。
 
 ## 真实后台的结构（用 inspect 和探查脚本确认过）
 
@@ -54,6 +49,11 @@ Steamworks **没有**修改商店页面的官方 API，所以一切都靠操作�
 - **后台显示已上传图片的方式**：后台把文件改名为 `header_schinese.jpg` 之类，列表里只有“简体中文 920 x 430 新”这样一行，点语言名才显示图片。图片 CDN 是 `https://shared.cdn.queniuqe.com/store_item_assets/steam/apps/<appid>/<hash>/<文件名>`（从页面链接里读到）。用户曾因此以为上传失败，网页上要写清楚后台位置。
 - **抢先体验问题的中文原文**、复选框文字等见 src/fieldInfo.ts 和 .autosw/inspect/field-labels.json。
 - **App 管理首页**：`/apps/landing/<appid>`，上面有各后台页面的链接，探查新功能时可以从这里开始。
+- **Demo**（关联程序页和商店编辑页）：
+  - 当前机构权限不足时，关联程序页可能不显示试用版。工具查找 Demo 时使用商店编辑页的搜索功能。
+  - 找 Demo 用 `GET /admin/store/suggest/Demo?term=<名称或 appid>`（商店页“关联的 Demo”输入框的自动补全），返回 `<li id="suggest_Demo_<itemid>" class="app_Demo">名称 ( appid )[ (本地化名)]</li>`。解析在 src/partner/demos.ts。
+  - Demo 编辑页同样是 `#gameform` → `save/<itemid>`，`g_ImageTypes` 和正式版一样，字段约 1967 个（正式版 2186）。只有正式版有：`earlyaccess.*`、`broadcast.*`、`links.steam_deck_blog_url`、`category_30/51`、`related_items[demos][#][...]`；只有 Demo 有：`app[content][standalone_demo_page]`（1 = 有独立商店页）、`category_29`。
+  - 正式版的 `app[related_items][demos][0][itemid]` 填的是 Demo 的 **itemid**。网页上添加 Demo 时，正式版本地这个字段是空的就填上（只改本地）。
 
 ## 代码结构
 
@@ -71,9 +71,9 @@ src/browser.ts             持久化浏览器、登录检测、settle()
 src/partner/form.ts        通用表单读写（按 name 定位；hidden/radio/checkbox）+ FormData 提交
 src/partner/store.ts       商店页拉取/推送；BUILTIN_IGNORE 里是内部字段
 src/partner/assets.ts      图片上传 + 上传后核对
-src/local/storeFiles.ts    本地布局：_common.yaml + <语言>/*.bbcode + <语言>/_fields.yaml；快照
-src/local/imageCells.ts    图片“格子”（槽位 × 语言，见 GLOSSARY.md）：key 解析（parseCell）、本地目录、'*' 回退 english、scanCells 把本地文件分到格子。其他地方不要自己拼 key 或判断文件属于哪一格
-src/local/inbox.ts         “待分类”收件箱：计划（planInbox）和整理（sortInbox），语言线索（langHints）
+src/local/storeFiles.ts    本地布局：_common.yaml + <语言>/*.bbcode + <语言>/_fields.yaml；快照（app.snapshotFile）。Demo 的继承和覆盖（readLocalLayers、writeLocal 只写覆盖、writeLocalField 写覆盖、clearOverride）只在这里
+src/local/imageCells.ts    图片“格子”（槽位 × 语言，见 GLOSSARY.md）：key 解析（parseCell）、本地目录、'*' 回退 english、scanCells 把本地文件分到格子（Demo 默认带上继承来的图；收件箱和拖放用 inherit: false 只看 Demo 自己的）。其他地方不要自己拼 key 或判断文件属于哪一格
+src/local/inbox.ts         “待分类”收件箱：计划（planInbox）和整理（sortInbox），语言线索（langHints）；Demo 某一格恢复继承（restoreInherited）
 src/local/assetFiles.ts    扫描 assets/{store,library}/<语言>/、assets/screenshots/；上传记录（sha256）
 src/runner.ts              操作运行：runOperation(req, log) 读配置、选 App、开关浏览器、逐个执行、汇总成 RunResult（ok / changedRemote / needLogin / 每个 App 的 diff 结果）。命令行和网页的 pull/diff/push/assets/delete-images/login 都只调它
 src/ops.ts                 每个 App 的 pull / diff / push / assets / delete-images 具体步骤，只给 runner 用：读本地 → 调 plan 算计划 → 去后台执行 → 写回记录 → 打日志。log(line, 'result') 标记结果行，网页结果框只显示这些
@@ -87,6 +87,8 @@ src/ui/page.html           网页，原生 JS，不需要构建。顶栏：项�
 src/ui/images.ts           图片表的数据：每格的本地文件、后台路径、状态（待上传 / 已在后台 / 缺少必填…）
 src/slots.ts               后台图片槽位表（照抄 g_ImageTypes）和按尺寸识别（照抄 IsImageTypeValid）
 src/fieldInfo.ts           字段名 → 后台页签 / 分组 / 中文名；fieldShape 决定网页怎么画（语言表 / 标签 / 数值+单位 / 普通）。page.html 不解析字段名
+src/demo.ts                添加 Demo：写配置 + 填正式版本地的“关联的 Demo”（itemid）
+src/partner/demos.ts        查找 Demo：解析 suggest/Demo 的返回（parseDemoSuggest），findDemos 先打开正式版编辑页再请求
 src/partner/meta.ts        后台状态快照（serialized_app_data.assets、CDN 前缀、复选框文字），保存到 .autosw/remote/。只由 store.ts 的 openEditPage 抓取：每次打开编辑页都抓，上传 / 删除图片后 adapter 自己再打开一次页面；ops 不用管快照
 src/local/imageSize.ts     离线读 PNG/JPEG/GIF/WebP 尺寸
 templates/STEAM_RULES.md   `init` 复制到游戏项目里，给 AI 看的规则。“## 本项目的风格”这个标题是升级时的分界线，不要改名
@@ -102,9 +104,11 @@ test/plan-test.ts          同步计划测试（离线）
 test/text-state-test.ts    文本状态测试（离线）
 test/config-test.ts        项目配置测试（离线）：默认值、继承、设置页和同步一致、addAppLanguages
 test/jobs-test.ts          网页任务测试（离线，假的 runOperation）：锁、结果框、对比结果的写入和作废、出错释放锁
+test/inherit-test.ts       Demo 继承测试（离线）：配置、文本的继承和覆盖、拉取时写覆盖的规则、图片继承、收件箱只看 Demo 自己的
+test/demo-e2e.ts           Demo 端到端测试（模拟后台 appid 200 → item 1200）：查找、正式版先拉取、只写覆盖、改动推到两个 App、继承的图上传到 Demo
 test/runner-test.ts        runner 测试（进程内调用 runOperation）：结果字段、未登录（模拟后台 appid 999 跳回 /?goto=）、changedRemote
 test/png.ts                测试用的 PNG 生成
-scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-assets、probe-assets2、probe-uploaded、probe-delete、probe-delete2）
+scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-assets、probe-assets2、probe-uploaded、probe-delete、probe-delete2、probe-associated、probe-demo-form）
 ```
 
 状态文件都在 `.autosw/`（已加进 gitignore）：
@@ -117,7 +121,7 @@ scripts/*.ts               只读的探查脚本（explore、probe-desc、probe-
 
 - **先只读探查，再写代码**：遇到新的后台页面，先写 `scripts/` 下的只读脚本，看 DOM、全局变量、后台的 JS，必要时用 curl 下载 `public/javascript/*.js` 到临时目录用 grep 读。不要靠猜。
 - **第一次真实写入前要征得用户同意**：先 `--dry-run`，再真正执行，写完后要从后台核对结果。保存的都是草稿，不点发布就不会上线。
-- **每个功能都要有模拟后台的端到端测试**：`npm test` 跑十套测试。注意测试必须异步调用 CLI，因为模拟服务器在同一个进程里，同步调用会把它卡死。
+- **每个功能都要有模拟后台的端到端测试**：`npm test` 跑十二套测试。注意测试必须异步调用 CLI，因为模拟服务器在同一个进程里，同步调用会把它卡死。
 - **测试配置必须写 `browser.profileDir`**（指向临时目录），否则会用到真实的共享登录；网页测试还要设 `AUTOSW_HOME` 到临时目录，否则会改到真实的项目列表。
 - **网页接口都带 project 参数**（配置文件路径），服务器只接受项目列表里的路径。同一时间只跑一个任务（共用一个浏览器配置文件）。
 - **在 Bash 里用 heredoc / sed 写含反斜杠的代码很容易被吃掉**：这类修改用 Write 写 .autosw/ 下的临时 python 脚本再运行，或者直接用 Edit。
@@ -143,7 +147,7 @@ npm test
 1. 在网页上第一次对真实后台上传（先演练，再上传，再核对）。
 2. `push --publish`：先只读探查发布页面（App 管理首页上应该有入口），弄清发布流程和需要确认的地方。
 3. 构建上传：需要用户提供构建账号（`steamcmd.user`）和游戏导出目录（`contentRoot`），还要确认本机有没有装 steamcmd。
-4. 成就：探查 `apps/achievements/5596340`。
+4. 成就：探查 `apps/achievements/<appid>`。
 5. 活动 / 公告，预告片。
 
 ## Agent skills

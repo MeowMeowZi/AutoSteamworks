@@ -95,7 +95,7 @@ export function planInbox(app: AppConfig): InboxItem[] {
   if (!files.length) return [];
 
   // 现有图片所在的格子，用来找“会被替换的旧图”
-  const scan = scanCells(app);
+  const scan = scanCells(app, { inherit: false }); // Demo 只看自己的文件：被替换的是 Demo 自己的图
   const fallback = defaultLang(app);
   const taken = new Map<string, string>();
   const targets = new Set<string>();
@@ -231,10 +231,26 @@ export function placeImage(app: AppConfig, name: string, bytes: Buffer, key: str
 
   const replaced: string[] = [];
   if (slot.tab !== 'screenshot') {
-    for (const f of filesIn(scanCells(app), cell)) { moveToReplaced(root, f.rel); replaced.push(f.rel); }
+    for (const f of filesIn(scanCells(app, { inherit: false }), cell)) { moveToReplaced(root, f.rel); replaced.push(f.rel); }
   }
   const to = freeName(root, dir, file);
   mkdirSync(dirname(join(root, to)), { recursive: true });
   writeFileSync(join(root, to), bytes);
   return `✓ ${file} → ${to}  ${where}${replaced.length ? `，原来的 ${replaced.join('、')} 挪到 ${REPLACED}/` : ''}`;
+}
+
+/**
+ * Demo 的某一格恢复继承：把 Demo 自己在这一格的图挪到 已替换/，之后用正式版的图（截图格 = 挪走 Demo 的全部截图）。
+ * 返回结果说明
+ */
+export function restoreInherited(app: AppConfig, key: string): string {
+  if (!app.inherits) throw new Error('只有继承了正式版的 App（Demo）才能恢复继承');
+  const root = app.assets.dir;
+  const cell = parseCell(app, key);
+  const own = filesIn(scanCells(app, { inherit: false }), cell);
+  if (!own.length) return `${cellName(cell)} 本来就在用正式版的图`;
+  for (const f of own) moveToReplaced(root, f.rel);
+  const now = filesIn(scanCells(app), cell);
+  const after = now.length ? '恢复用正式版的图' : cell.lang !== 'english' && cell.slot.localized ? '没有图了（Demo 有英文版时不继承正式版，商店会显示 Demo 的英文版）' : '没有图了（正式版这一格也没有）';
+  return `✓ ${cellName(cell)} ${after}，Demo 自己的 ${own.map((f) => f.rel).join('、')} 挪到 ${REPLACED}/`;
 }

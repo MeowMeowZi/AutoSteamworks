@@ -26,19 +26,19 @@ try {
   const [app] = c.apps;
 
   // ---- 没有本地文件 ----
-  let t = readTextState(c, app);
+  let t = readTextState(app);
   assert.deepEqual([t.pulled, t.hasLocal, t.edits, t.issues], [false, false, [], []], '什么都没有');
 
   // ---- 有本地文件、没有快照：能做规则检查，算不出改动，不算拉取过 ----
   const fields = { [D('english')]: 'x'.repeat(250), [D('schinese')]: 'y'.repeat(301), [`${MEM}[amount]`]: '4', [`${MEM}[units]`]: 'GB', [SUP]: true };
   writeLocal(app, fields);
-  t = readTextState(c, app);
+  t = readTextState(app);
   assert.deepEqual([t.pulled, t.hasLocal, t.base, t.edits], [false, true, undefined, []], '没有快照');
   assert.ok(t.issues.some((i) => i.key === D('schinese') && i.level === 'error'), '没有快照也做规则检查');
 
   // ---- 有快照：改动 ----
-  writeSnapshot(c, app, { ...fields, [D('english')]: 'old' });
-  t = readTextState(c, app);
+  writeSnapshot(app, { ...fields, [D('english')]: 'old' });
+  t = readTextState(app);
   assert.equal(t.pulled, true);
   assert.deepEqual(t.edits, [D('english')], '只有改过的字段');
 

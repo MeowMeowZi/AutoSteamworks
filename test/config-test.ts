@@ -81,6 +81,34 @@ apps:
   assert.throws(() => createConfig(f, { name: 'x', appid: 7, languages: ['english'] }), /已经存在/);
   assert.throws(() => createConfig(join(ws, 'bad.yaml'), { name: 'x', appid: 7, languages: ['klingon'] }), /不认识的语言/);
 
+  // ---- Demo：inherits ----
+  f = cfg(`${PROFILE}languages: [english]
+store: { ignoreFields: ["a*"] }
+apps:
+  game: { appid: 1, languages: [english, schinese], assets: { screenshotsAllAges: false }, store: { ignoreFields: ["b*"] } }
+  demo: { appid: 2, itemid: 12, inherits: game, store: { ignoreFields: ["c*"] } }
+`);
+  c = loadConfig(f);
+  const [g, dm] = c.apps;
+  assert.equal(dm.inherits, g);
+  assert.deepEqual([dm.languages, dm.assets.screenshotsAllAges, dm.itemid], [['english', 'schinese'], false, 12], 'App 自己的 → 继承的 App → 顶层');
+  assert.deepEqual(dm.store.ignoreFields, ['a*', 'b*', 'c*']);
+  assert.notEqual(dm.snapshotFile, g.snapshotFile);
+  s = readSettings(f);
+  assert.deepEqual(s.apps.map((a) => [a.key, a.inherits]), [['game', undefined], ['demo', 'game']]);
+  assert.throws(() => writeSettings(f, { ...s, apps: [s.apps[1]] }), /“demo”继承了“game”/, '不能删掉被继承的 App');
+  writeSettings(f, s);
+  assert.equal(yaml(f).apps.demo.inherits, 'game', '保存设置时保留 inherits');
+  addAppLanguages(f, 'demo', ['japanese']);
+  assert.deepEqual(yaml(f).apps.demo.languages, ['english', 'schinese', 'japanese'], '多个 App 时给 Demo 单独写一份（从继承的语言开始）');
+  for (const [text, err] of [
+    ['  demo: { appid: 2, inherits: demo }', /不能指向自己/],
+    ['  demo: { appid: 2, inherits: nope }', /不存在/],
+    ['  demo: { appid: 2, inherits: game }\n  demo2: { appid: 3, inherits: demo }', /只支持一层/],
+  ] as const) {
+    assert.throws(() => loadConfig(cfg(`${PROFILE}apps:\n  game: { appid: 1 }\n${text}\n`)), err);
+  }
+
   ok = true;
   console.log('✓ 项目配置测试通过');
 } finally {

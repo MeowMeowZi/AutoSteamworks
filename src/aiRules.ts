@@ -85,7 +85,7 @@ export function aiPrompt(config: string): string {
     title = c.apps[0]?.name || title;
     for (const a of c.apps) {
       const pulled = existsSync(join(a.storeDir, '_common.yaml'));
-      lines.push(`- App \`${a.key}\`：appid ${a.appid}${a.name ? `，${a.name}` : ''}，语言 ${a.languages.join(', ')}；`
+      lines.push(`- App \`${a.key}\`：appid ${a.appid}${a.name ? `，${a.name}` : ''}${a.inherits ? `，是 \`${a.inherits.key}\` 的 Demo（继承它的文本和图片，见规则的“Demo”一节）` : ''}，语言 ${a.languages.join(', ')}；`
         + `商店文本在 ${a.storeDir}（${pulled ? '已从后台拉取' : '还没从后台拉取，写商店文本前要先请我在网页上点“从后台拉取”'}）；图片目录 ${a.assets.dir}`);
     }
   } catch (e) {

@@ -32,9 +32,27 @@ export async function openEditPage(page: Page, cfg: Config, app: AppConfig, tab?
   await captureRemoteMeta(page, cfg, app);
 }
 
+/** 已关联的 Demo 只出现在后台保存的数据里；表单的 itemid 输入框只用于添加下一条。 */
+function savedDemoFields(fields: FieldInfo[]): FieldInfo[] {
+  const raw = fields.find((f) => f.key === 'serialized_app_data')?.value;
+  if (typeof raw !== 'string' || !raw) return [];
+  let demos: Record<string, { itemid?: string | number }> | undefined;
+  try { demos = JSON.parse(raw)?.related_items?.demos; } catch { return []; }
+  const saved: FieldInfo[] = [];
+  for (const [index, demo] of Object.entries(demos ?? {})) {
+    if (!/^\d+$/.test(index) || !/^[1-9]\d*$/.test(String(demo?.itemid))) continue;
+    const key = `app[related_items][demos][${index}][itemid]`;
+    if (!fields.some((f) => f.key === key)) {
+      saved.push({ key, type: 'readonly', label: '已关联的 Demo', value: String(demo.itemid) });
+    }
+  }
+  return saved;
+}
+
 export async function loadStorePage(page: Page, cfg: Config, app: AppConfig): Promise<FieldInfo[]> {
   await openEditPage(page, cfg, app);
-  return filterIgnored(app, await readFields(page, cfg.formSelector));
+  const fields = await readFields(page, cfg.formSelector);
+  return filterIgnored(app, [...fields, ...savedDemoFields(fields)]);
 }
 
 /** 读后台所有字段，不按语言过滤 */

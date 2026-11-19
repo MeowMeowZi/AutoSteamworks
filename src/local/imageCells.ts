@@ -4,6 +4,8 @@
 //   本地目录： store/<语言>/、library/<语言>/、screenshots/；不分语言的商店/库图片放在默认语言目录（有 english 用 english，否则第一种语言）
 //   查后台：   '*' 用 english 去查 serialized_app_data.assets
 // 普通格子一格只放一张图（新图替换旧图）；截图可以有很多张，所以 scanCells 把截图单独列出来，不放进 cells。
+// Demo（app.inherits）没放图的格子用正式版的图，规则见 scanCells。
+import { join, relative } from 'node:path';
 import type { AppConfig } from '../config.js';
 import { classify, sizesFor, SLOTS, type Slot } from '../slots.js';
 import { scanAssets, type LocalAsset } from './assetFiles.js';
@@ -64,8 +66,7 @@ export interface CellScan {
   warnings: string[];
 }
 
-/** 扫描本地图片，按尺寸分到格子里（规则和后台一样，见 slots.ts 的 classify） */
-export function scanCells(app: AppConfig): CellScan {
+function scanOwn(app: AppConfig): CellScan {
   const { assets, warnings } = scanAssets(app);
   const scan: CellScan = { cells: new Map(), screenshots: [], unmatched: [], warnings };
   for (const a of assets) {
@@ -79,6 +80,34 @@ export function scanCells(app: AppConfig): CellScan {
     const k = cellKey(cellOf(slot, a.lang!));
     scan.cells.set(k, [...(scan.cells.get(k) ?? []), f]);
   }
+  return scan;
+}
+
+/**
+ * 扫描本地图片，按尺寸分到格子里（规则和后台一样，见 slots.ts 的 classify）。
+ * Demo 默认带上继承的图（inherit: false 只看 Demo 自己的文件，收件箱和拖放用）：
+ *   普通格子：Demo 这种语言有图 → 用它；Demo 的 english 有图 → 不继承（商店会显示 Demo 的英文版）；否则用正式版同一格的图。
+ *   截图：Demo 一张都没有时整组用正式版的。
+ * 继承来的文件 inherited = true，rel 相对 Demo 的 assets 目录（../../game/assets/...），上传记录记在 Demo 名下。
+ */
+export function scanCells(app: AppConfig, o: { inherit?: boolean } = {}): CellScan {
+  const scan = scanOwn(app);
+  const parent = app.inherits;
+  if (!parent || o.inherit === false) return scan;
+  const p = scanOwn(parent);
+  const adopt = (f: CellFile): CellFile =>
+    ({ ...f, inherited: true, rel: relative(app.assets.dir, join(parent.assets.dir, f.rel)).replace(/\\/g, '/') });
+  for (const slot of SLOTS) {
+    if (slot.tab === 'screenshot') continue;
+    for (const lang of slot.localized ? app.languages : [ANY_LANG]) {
+      const k = cellKey(cellOf(slot, lang));
+      if (scan.cells.has(k)) continue;
+      if (slot.localized && lang !== 'english' && scan.cells.has(cellKey(cellOf(slot, 'english')))) continue;
+      const files = p.cells.get(k);
+      if (files) scan.cells.set(k, files.map(adopt));
+    }
+  }
+  if (!scan.screenshots.length) scan.screenshots = p.screenshots.map(adopt);
   return scan;
 }
 

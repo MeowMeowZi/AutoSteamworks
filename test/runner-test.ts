@@ -10,6 +10,7 @@ import { DRAFT_NOTE } from '../src/ops.js';
 
 const srv = await start();
 const ws = mkdtempSync(join(tmpdir(), 'autosw-runner-'));
+process.env.AUTOSW_HOME = join(ws, 'home');
 const configPath = join(ws, 'steam.config.yaml');
 writeFileSync(configPath, `
 browser: { profileDir: .autosw/profile }  # 不用真实的共享登录

@@ -11,7 +11,11 @@ import { LANG_NAMES } from '../fieldInfo.js';
 
 export type CellStatus = 'pending' | 'synced' | 'uploaded' | 'lost' | 'remote-only' | 'missing-required' | 'fallback' | 'empty';
 
-export interface LocalImage { rel: string; state: AssetState; bytes: number; size?: string; uploadedAt?: string }
+export interface LocalImage {
+  rel: string; state: AssetState; bytes: number; size?: string; uploadedAt?: string;
+  /** Demo 用的正式版的图（rel 是 ../../<正式版>/assets/...） */
+  inherited?: boolean;
+}
 
 export interface Cell {
   /** 格子的 key，例如 "header|schinese"（见 local/imageCells.ts）；网页拖拽、删除都用它 */
@@ -49,11 +53,12 @@ export function imageBoard(c: Config, app: AppConfig, meta: RemoteMeta | undefin
   // 旧项目没有收件箱：打开网页时顺手建好，用户能直接往里丢图片
   mkdirSync(join(app.assets.dir, INBOX), { recursive: true });
   const scan = scanCells(app);
+  const parentName = app.inherits ? `正式版（${app.inherits.key}）` : '';
   const manifest = readManifest(c, app);
   const cdn = meta?.cdnBase ?? `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${app.appid}/`;
   const issues: Issue[] = scan.warnings.map((msg) => ({ level: 'warn', msg }));
   const image = (a: LocalAsset & { size?: string }): LocalImage => ({
-    rel: a.rel, state: assetState(a, manifest), bytes: a.bytes.length, size: a.size, uploadedAt: manifest[a.rel]?.uploadedAt,
+    rel: a.rel, state: assetState(a, manifest), bytes: a.bytes.length, size: a.size, uploadedAt: manifest[a.rel]?.uploadedAt, inherited: a.inherited,
   });
   const unmatched = scan.unmatched.map((u) => ({ ...image(u), reason: u.reason }));
   const screenshots = scan.screenshots.map(image);
@@ -78,6 +83,7 @@ export function imageBoard(c: Config, app: AppConfig, meta: RemoteMeta | undefin
       let text = STATUS_TEXT[status];
       if (local && local.state === 'changed') text = '本地改过，待上传（会替换后台的图）';
       if (local && local.state === 'new' && path) text = '待上传（会替换后台现在的图）';
+      if (local?.inherited) text = `继承自${parentName}：${text}`;
       cells[lang] = { key: cellKey(cell), name: cellName(cell, (l) => LANG_NAMES[l] ?? l), status, text, local, extra: more.map((m) => m.rel), remoteUrl: path ? cdn + path : undefined };
       if (more.length) issues.push({ level: 'warn', msg: `${cells[lang].name} 有 ${more.length + 1} 张本地图片：${[local!.rel, ...more.map((m) => m.rel)].join('、')}。后台每个位置只能放一张，只保留一张。` });
     }
