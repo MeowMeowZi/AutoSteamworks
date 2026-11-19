@@ -1,5 +1,5 @@
 import type { FieldValue } from './partner/form.js';
-import { norm, type Fields } from './local/storeFiles.js';
+import { sameFieldValue, type Fields } from './local/storeFiles.js';
 
 export type ChangeKind =
   | 'local' //    只有本地改了 → push
@@ -15,9 +15,6 @@ export interface Change {
   base?: FieldValue;
 }
 
-const eq = (a?: FieldValue, b?: FieldValue) =>
-  a === undefined || b === undefined ? a === b : norm(a) === norm(b);
-
 /** 本地 / 线上 / 快照 三方对比。本地文件里没有的 key 视为“不管”。 */
 export function threeWay(local: Fields, remote: Fields, base: Fields): Change[] {
   const out: Change[] = [];
@@ -27,9 +24,9 @@ export function threeWay(local: Fields, remote: Fields, base: Fields): Change[] 
       out.push({ key, kind: 'gone', local: l, base: b });
       continue;
     }
-    if (eq(l, r)) continue;
-    const localChanged = !eq(l, b);
-    const remoteChanged = !eq(r, b);
+    if (sameFieldValue(key, l, r)) continue;
+    const localChanged = !sameFieldValue(key, l, b);
+    const remoteChanged = !sameFieldValue(key, r, b);
     const kind: ChangeKind = localChanged && remoteChanged ? 'conflict' : localChanged ? 'local' : 'remote';
     out.push({ key, kind, local: l, remote: r, base: b });
   }
@@ -38,5 +35,5 @@ export function threeWay(local: Fields, remote: Fields, base: Fields): Change[] 
 
 /** 离线：本地相对快照改了哪些 */
 export function localEdits(local: Fields, base: Fields): string[] {
-  return Object.keys(local).filter((k) => !eq(local[k], base[k])).sort();
+  return Object.keys(local).filter((key) => !sameFieldValue(key, local[key], base[key])).sort();
 }

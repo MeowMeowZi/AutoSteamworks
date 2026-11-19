@@ -48,7 +48,7 @@ function deleteLinks(id: string) {
 function page(id: string) {
   const d = get(id);
   const hidden = Object.entries(d)
-    .filter(([k]) => k.startsWith('app[content]') || k === 'app[platforms][win]')
+    .filter(([k]) => k.startsWith('app[content]') || k === 'app[platforms][win]' || /^rgGenres\[\d+\]$/.test(k))
     .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`).join('\n');
   const tags = d['tags[]'].split(',');
   return `<!doctype html><html><body>
@@ -159,6 +159,7 @@ export function start(port = 0) {
       for (const [k, v] of form) if (typeof v === 'string') lastPost[k] = v;
       for (const k of Object.keys(d)) {
         if (k === 'tags[]') d[k] = form.getAll(k).join(',');
+        else if (/^rgGenres\[\d+\]$/.test(k) && form.get(k) === 'true') d[k] = '1';
         else if (form.has(k)) d[k] = String(form.get(k));
       }
       return res.writeHead(302, { Location: `/admin/game/edit/${m[1]}?activetab=tab_description` }).end();

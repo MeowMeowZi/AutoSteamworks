@@ -16,6 +16,13 @@ export const STEAM_LANGS = [
 
 export const norm = (v: FieldValue) => (typeof v === 'string' ? v.replace(/\r\n/g, '\n') : v);
 
+export function sameFieldValue(key: string, left?: FieldValue, right?: FieldValue): boolean {
+  if (left === right) return true;
+  if (left === undefined || right === undefined) return false;
+  if (/^rgGenres\[\d+\]$/.test(key) && (left === 'true' || left === '1') && (right === 'true' || right === '1')) return true;
+  return norm(left) === norm(right);
+}
+
 /**
  * 本地化字段 name 和本地路径互相转换：
  *   app[content][about][schinese]                    → schinese / about

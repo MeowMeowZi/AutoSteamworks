@@ -47,6 +47,13 @@ try {
   const snap = snapshotAfterPush(base, [D('english')], { [D('english')]: 'local', [D('schinese')]: '线上' });
   assert.deepEqual(snap, { [D('english')]: 'local', [D('schinese')]: '甲' }, '只有保存成功的字段进快照');
 
+  const genre = 'rgGenres[3]', primary = 'app[classification][primary_genre]';
+  const genrePlan = planPush({ [genre]: 'true' }, { [genre]: '1' }, { [genre]: '' }, {});
+  assert.deepEqual([genrePlan.confirmed, genrePlan.toPush], [[genre], []], '旧快照只需核对，无需重新上传');
+  assert.deepEqual(pullBlockers({ [genre]: 'true' }, { [genre]: '1' }), []);
+  assert.deepEqual(pushEntries(planPush({ [genre]: '' }, { [genre]: '1' }, { [genre]: 'true' }, {})), [[genre, '']]);
+  assert.deepEqual(pullBlockers({ [primary]: 'true', [genre]: '2' }, { [primary]: '1', [genre]: '1' }).sort(), [primary, genre]);
+
   // ---- 上传图片 ----
   put('store/english/header.png', png(920, 430));
   put('store/schinese/header.png', png(920, 430, 2));

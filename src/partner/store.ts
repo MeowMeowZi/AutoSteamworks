@@ -2,7 +2,7 @@ import type { Page } from 'playwright-core';
 import { globToRegex, type AppConfig, type Config } from '../config.js';
 import { gotoPartner, sleep } from '../browser.js';
 import { applyFields, postForm, readFields, type FieldInfo, type FieldValue } from './form.js';
-import { keepLanguages, norm, STEAM_LANGS, type Fields } from '../local/storeFiles.js';
+import { keepLanguages, sameFieldValue, STEAM_LANGS, type Fields } from '../local/storeFiles.js';
 import { captureRemoteMeta } from './meta.js';
 
 /** 页面内部用的字段，同步它们没有意义（或者会出问题） */
@@ -78,7 +78,7 @@ export async function pushStore(page: Page, cfg: Config, app: AppConfig, changes
   if (attempted.length) ({ status } = await postForm(page, cfg.formSelector));
 
   const after = await fetchRemote(page, cfg, app);
-  const notPersisted = attempted.filter(([k, v]) => after[k] === undefined || norm(after[k]) !== norm(v)).map(([k]) => k);
+  const notPersisted = attempted.filter(([key, value]) => !sameFieldValue(key, after[key], value)).map(([key]) => key);
   const saved = attempted.map(([k]) => k).filter((k) => !notPersisted.includes(k));
   return { saved, missing, notPersisted, status, after };
 }

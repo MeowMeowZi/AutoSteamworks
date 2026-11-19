@@ -325,6 +325,21 @@ try {
   assert.equal(field(a, 'english', 'short_description').info.label, '简短描述');
   assert.equal(field(a, 'english', 'short_description').info.tab, '描述');
 
+  const genres = ['rgGenres[3]', 'rgGenres[4]'];
+  for (const key of genres) remote()[key] = '';
+  await runJob({ action: 'pull', force: true });
+  for (const key of genres) assert.equal((await post('/api/field', { app: 'game', key, value: 'true' })).status, 200);
+  await runJob({ action: 'push', only: genres });
+  assert.ok((await stateOf()).lastResult.ok, '类型提交 true、回读 1 不报保存失败');
+  const resultFields = (await game()).common;
+  for (const key of genres) {
+    const resultField = resultFields.find((item: any) => item.key === key);
+    assert.deepEqual([srv.lastPost()![key], remote()[key], resultField.base, resultField.edited], ['true', '1', '1', false]);
+  }
+  const lastGenrePost = srv.lastPost();
+  await runJob({ action: 'push', only: genres });
+  assert.equal(srv.lastPost(), lastGenrePost, '已保存的类型不重复提交');
+
   ok = true;
   console.log('\n✓ 后台网页测试全部通过');
 } finally {

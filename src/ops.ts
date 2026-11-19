@@ -88,9 +88,13 @@ export async function pushApp(page: Page, c: Config, app: AppConfig, o: PushOpts
     log('  尚未 pull，跳过（必须先 pull 才能安全地推送）', 'result');
     return { failed: false, pushed: false };
   }
-  const plan = planPush(readLocal(app), await fetchRemote(page, c, app), base, o);
+  const remote = await fetchRemote(page, c, app);
+  const plan = planPush(readLocal(app), remote, base, o);
+  const confirmedBase = snapshotAfterPush(base, plan.confirmed, remote);
   plan.changes.filter((ch) => ch.kind !== 'local').forEach((ch) => printChange(log, ch, false, ch.kind === 'remote' ? 'detail' : 'result'));
+  if (plan.confirmed.length && !o.dryRun) log(`  ✓ 后台已有相同的值，已核对 ${plan.confirmed.length} 个字段`, 'result');
   if (!plan.toPush.length) {
+    if (plan.confirmed.length && !o.dryRun) writeSnapshot(c, app, confirmedBase);
     log('  没有需要推送的改动', 'result');
     return { failed: false, pushed: false };
   }
@@ -98,7 +102,7 @@ export async function pushApp(page: Page, c: Config, app: AppConfig, o: PushOpts
   if (o.dryRun) return { failed: false, pushed: false };
 
   const r = await pushStore(page, c, app, pushEntries(plan));
-  writeSnapshot(c, app, snapshotAfterPush(base, r.saved, r.after));
+  writeSnapshot(c, app, snapshotAfterPush(confirmedBase, r.saved, r.after));
   log(`  ✓ 已保存 ${r.saved.length} 个字段（HTTP ${r.status}）`, 'result');
   if (r.missing.length) log(`  ✗ 页面上找不到: ${r.missing.map(display).join(', ')}`, 'result');
   if (r.notPersisted.length) log(`  ✗ 提交了但重新加载后值不对: ${r.notPersisted.map(display).join(', ')}`, 'result');

@@ -28,13 +28,17 @@ export interface PushPlan {
   changes: Change[];
   /** 要写到后台的字段 */
   toPush: Change[];
+  /** 本地相对快照改过，后台已经是本地值，只需更新快照 */
+  confirmed: string[];
 }
 
 export function planPush(local: Fields, remote: Fields, base: Fields, o: { only?: string[]; force?: boolean }): PushPlan {
   let changes = threeWay(local, remote, base);
   if (o.only) changes = changes.filter((ch) => o.only!.includes(ch.key));
   const toPush = changes.filter((ch) => ch.kind === 'local' || (o.force && ch.kind === 'conflict'));
-  return { changes, toPush };
+  const different = new Set(changes.map((ch) => ch.key));
+  const confirmed = localEdits(local, base).filter((key) => (!o.only || o.only.includes(key)) && !different.has(key));
+  return { changes, toPush, confirmed };
 }
 
 export const pushEntries = (p: PushPlan): [string, FieldValue][] => p.toPush.map((ch) => [ch.key, ch.local!]);
