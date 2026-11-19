@@ -99,6 +99,7 @@ export function aiPrompt(config: string): string {
     `- 配置文件：${config}`,
     ...lines,
     `- 规则文件：${rules.path}`,
+    `- 标签向导候选词表（只读，按题组查简中名称）：${join(PKG_ROOT, 'templates', 'steam-tags.zh-CN.txt')}`,
     `- 检查命令（改完必须运行）：${check}`,
     `- 整理图片命令（把 待分类/ 里的图片放到对应目录，先加 -n 演练）：${check.replace(/ check$/, ' sort-images')}`,
     '',

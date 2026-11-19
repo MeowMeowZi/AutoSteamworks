@@ -119,6 +119,10 @@ try {
   assert.match(prompt, /还没从后台拉取/);
   assert.match(prompt, /-c ".*steam\.config\.yaml" check/);
   assert.match(prompt, /邪神 = Evil God/, '带上规则全文');
+  assert.match(prompt, /## 类型与标签向导/);
+  const catalogPath = prompt.match(/标签向导候选词表（只读，按题组查简中名称）：(.+)/)?.[1];
+  assert.ok(catalogPath);
+  assert.match(readFileSync(catalogPath, 'utf8'), /【子类型】[\s\S]*挂机游戏/);
 
   // 旧版规则：通用部分被换成新模板，风格一节保留
   writeFileSync(join(g2, 'STEAM_RULES.md'), '# 旧规则\n\n旧的通用内容\n\n## 本项目的风格（用户自己填写）\n\n- 语气：轻松\n');
@@ -127,6 +131,7 @@ try {
   const upgraded = readFileSync(join(g2, 'STEAM_RULES.md'), 'utf8');
   assert.doesNotMatch(upgraded, /旧的通用内容/);
   assert.match(upgraded, /## 工作流程/);
+  assert.match(upgraded, /_tags\.md/);
   assert.match(upgraded, /- 语气：轻松\n$/);
   assert.equal((await get('/api/rules?project=' + encodeURIComponent(c2))).outdated, false);
   assert.equal(readFileSync(join(g2, 'CLAUDE.md'), 'utf8').match(/STEAM_RULES\.md/g)!.length, 1, '指引不重复添加');
