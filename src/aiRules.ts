@@ -86,13 +86,13 @@ export function aiPrompt(config: string): string {
     for (const a of c.apps) {
       const pulled = existsSync(join(a.storeDir, '_common.yaml'));
       lines.push(`- App \`${a.key}\`：appid ${a.appid}${a.name ? `，${a.name}` : ''}${a.inherits ? `，是 \`${a.inherits.key}\` 的 Demo（继承它的文本和图片，见规则的“Demo”一节）` : ''}，语言 ${a.languages.join(', ')}；`
-        + `商店文本在 ${a.storeDir}（${pulled ? '已从后台拉取' : '还没从后台拉取，写商店文本前要先请我在网页上点“从后台拉取”'}）；图片目录 ${a.assets.dir}`);
+        + `商店文本在 ${a.storeDir}（${pulled ? '已从后台拉取' : '还没从后台拉取，先按规则第 1 步取得该 App 的表单'}）；图片目录 ${a.assets.dir}`);
     }
   } catch (e) {
     lines.push(existsSync(config) ? `- 配置文件有错误：${(e as Error).message}` : '- 还没有配置文件，请我先在 AutoSteamworks 网页上初始化这个项目');
   }
   return [
-    `你现在帮我在游戏项目「${title}」里准备 Steam 商店的内容。这个项目用 AutoSteamworks 把本地文件同步到 Steamworks 后台：你只改本地文件，上传由我在网页上完成。`,
+    `请根据游戏项目「${title}」和各 App 的构建准备 Steam 商店资料。默认只准备本地内容供我预览。如果我明确要求实际同步，请按指定范围操作，并逐个 App 回读后台结果。`,
     '',
     '项目信息：',
     `- 项目文件夹：${dir}`,
@@ -103,7 +103,7 @@ export function aiPrompt(config: string): string {
     `- 检查命令（改完必须运行）：${check}`,
     `- 整理图片命令（把 待分类/ 里的图片放到对应目录，先加 -n 演练）：${check.replace(/ check$/, ' sort-images')}`,
     '',
-    '这次的任务：先完整阅读下面的规则，然后按“工作流程”从第 1 步开始，把能从项目资料里得到的配置、商店文本和图片都准备好。需要我提供的信息（appid、构建账号、价格、发售日期等）就直接问我，不要编。',
+    '先完整阅读下面的规则，然后按我的任务范围执行。准备整套资料时，逐个 App 核对配置、商店文本、截图类别、标签、署名、库资产、图标、内容调查和发行日期。从项目和目标构建取证，资料不足的项目列给我确认。',
     '',
     '========== 以下是 STEAM_RULES.md ==========',
     '',

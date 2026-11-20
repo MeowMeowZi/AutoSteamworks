@@ -123,6 +123,8 @@ try {
   assert.match(prompt, /-c ".*steam\.config\.yaml" check/);
   assert.match(prompt, /宝石 = Gem/, '带上规则全文');
   assert.match(prompt, /## 类型与标签向导/);
+  assert.match(prompt, /默认只准备本地内容/);
+  assert.ok(prompt.includes('app[game][publishers][0]'));
   const catalogPath = prompt.match(/标签向导候选词表（只读，按题组查简中名称）：(.+)/)?.[1];
   assert.ok(catalogPath);
   assert.match(readFileSync(catalogPath, 'utf8'), /【子类型】[\s\S]*挂机游戏/);
@@ -135,6 +137,8 @@ try {
   assert.doesNotMatch(upgraded, /旧的通用内容/);
   assert.match(upgraded, /## 工作流程/);
   assert.match(upgraded, /_tags\.md/);
+  assert.match(upgraded, /### Demo 内容调查/);
+  assert.match(upgraded, /## 预定发行日期/);
   assert.match(upgraded, /- 语气：轻松\n$/);
   assert.equal((await get('/api/rules?project=' + encodeURIComponent(c2))).outdated, false);
   assert.equal(readFileSync(join(g2, 'CLAUDE.md'), 'utf8').match(/STEAM_RULES\.md/g)!.length, 1, '指引不重复添加');

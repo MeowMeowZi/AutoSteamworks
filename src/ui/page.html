@@ -824,11 +824,11 @@ async function loadRules() { rules = await api('/api/rules?project=' + encodeURI
 function renderRules() {
   if (!rules || rulesFor !== project) { loadRules(); return '<div class="empty-state">加载中…</div>'; }
   return `<div class="overview"><h2>AI 规则</h2>
-    <div class="muted small">让 AI（例如 Claude Code）帮你写商店文本、准备图片。它只改本地文件，改完你在这个网页上看过再上传。</div>
+    <div class="muted small">让 AI 根据项目和构建准备正式版、Demo 的商店资料。默认先在本地预览，也可以明确指定由 AI 同步哪些项目。</div>
     <div class="row" style="margin-top:12px"><button class="b primary big" data-copyprompt>复制给 AI</button>
       <span class="small">然后在游戏项目文件夹里打开 AI，粘贴发送</span><span class="small muted" id="prompt-msg"></span></div>
     <details class="help-d"><summary>ⓘ 说明</summary><ul>
-      <li>复制的内容 = 项目现状 + 规则全文：配置怎么写、商店文本和图片放在哪里、Steam 的规则，以及 AI 必须遵守的约定（只改本地文件，不上传）。</li>
+      <li>复制内容包含当前项目的 App、文件位置和完整规则，包括如何准备资料，以及实际同步后如何逐个 App 核对商店清单。</li>
       <li>需要你提供的信息，AI 会直接问你。它改完文件，这个网页会自动显示改动，你看完再勾选上传。</li>
       <li>规则最后一节“本项目的风格”可以让 AI 根据项目资料填写，你再确认。</li></ul></details>
     ${rules.outdated ? `<div class="small" style="margin-top:8px;color:#b45309">这个项目的规则文件是旧版本。点“升级到最新规则”会替换通用部分，“本项目的风格”一节保留不变。
