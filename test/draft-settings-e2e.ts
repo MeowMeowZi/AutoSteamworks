@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { chromium } from 'playwright-core';
+import { openSurveyDescription } from '../src/partner/draftSettings.js';
 import { startUi } from '../src/ui/server.js';
 import { png } from './png.js';
 
@@ -21,6 +22,8 @@ const icons: Record<string, string> = {};
 const posts: string[] = [];
 let rejectIcon = true;
 let rejectShortcut = false;
+let surveyAccess: 'direct' | 'viaLanding' | 'unavailable' = 'direct';
+let surveyLinkVisits = 0;
 const server = createServer(async (req, res) => {
   const path = new URL(req.url!, 'http://localhost').pathname;
   const html = (str: string) => res.writeHead(200, { 'content-type': 'text/html;charset=utf-8' }).end(str);
@@ -60,13 +63,22 @@ const server = createServer(async (req, res) => {
     }
     return res.writeHead(404).end();
   }
-  if (path === '/contentsurvey/edit/100/') return html(`<button onclick="this.hidden=true;panel.hidden=false">生成式人工智能（AI）</button>
+  if (path === '/apps/landing/100') return html(`<p>您当前视图中所设置的组织并没有此应用的正确权限</p>
+    <a href="/contentsurvey/edit/200/">其他应用</a><a href="/contentsurvey/edit/100/">内容调查</a>`);
+  if (path === '/contentsurvey/edit/100/') {
+    const viaLanding = req.headers.referer === origin + '/apps/landing/100';
+    if (viaLanding) surveyLinkVisits++;
+    if (surveyAccess === 'unavailable' || (surveyAccess === 'viaLanding' && !viaLanding))
+      return html('<p>我们无法加载此应用的内容调查。这是我方的问题。</p>');
+    return html(`<div role="button" tabindex="0" onclick="this.hidden=true;panel.hidden=false"><div>
+    <div>栏目未完成</div><div>已选择的主题：1</div></div>生成式人工智能（AI）</div>
     <section id="panel" hidden><div><h1>商店页面描述 *</h1><select id="lang"><option value="0">英语</option><option value="6">简体中文</option></select><textarea id="desc"></textarea></div>
     <button id="save">保存并继续</button></section><script>
     const values=${JSON.stringify(disclosures)};desc.value=values[lang.value]||'';
     lang.onchange=()=>desc.value=values[lang.value]||'';desc.oninput=()=>values[lang.value]=desc.value;
     save.onclick=async()=>{await fetch('/survey/save',{method:'POST',body:JSON.stringify(values)});panel.hidden=true};
     </script>`);
+  }
   if (path === '/apps/clientimages/100') return html(['clienticon', 'icon'].map(type => `<form action="/images/upload" method="post" enctype="multipart/form-data" target="answer">
     <input name="requestType" type="hidden" value="${type}"><input name="appID" type="hidden" value="100">
     <img id="${type === 'icon' ? 'appIconFull' : 'appIco'}" src="${icons[type] || '/placeholder.jpg'}">
@@ -95,6 +107,14 @@ const ui = await startUi({ port: 0, open: project });
 const browser = await chromium.launch({ channel: 'msedge' });
 try {
   const page = await browser.newPage();
+  const edit = await openSurveyDescription(page, origin, 100);
+  assert.ok(await edit.text.isVisible());
+  assert.equal(surveyLinkVisits, 0, '直接打开成功时不需要再访问应用管理页');
+  surveyAccess = 'unavailable';
+  await assert.rejects(openSurveyDescription(page, origin, 100), /Steamworks 未能加载.*当前机构权限不符/);
+  assert.equal(surveyLinkVisits, 1);
+  assert.deepEqual(posts, [], '调查不可访问时不提交');
+  surveyAccess = 'viaLanding';
   const jpg = await page.evaluate(() => { const canvas = document.createElement('canvas'); canvas.width = canvas.height = 184; return canvas.toDataURL('image/jpeg').split(',')[1]; });
   put('assets/client-icons/app.jpg', Buffer.from(jpg, 'base64'));
   page.on('dialog', dialog => dialog.accept());
@@ -110,7 +130,10 @@ try {
   await page.locator('[data-upload=real]').click();
   await page.locator('.result.fail').waitFor();
   assert.match(await page.locator('.result.fail').innerText(), /图标与上传结果不一致/);
+  assert.match(await page.locator('#log').textContent() ?? '', /从此 App 的管理页重新进入.*正在填写 english.*正在填写 schinese.*正在提交 AI 描述.*正在重新打开调查草稿/s);
   assert.deepEqual(disclosures, { '0': 'Artwork', '6': '宣传美术', '2': 'Conserver cette traduction' });
+  assert.equal(surveyLinkVisits, 3, '填写与保存后回读都能从目标 App 的内容调查链接进入');
+  assert.equal(posts.filter(s => s === '/survey/save').length, 1, '重开调查不会重复提交');
   assert.deepEqual(shots.map(x => x.category), ['gamemenu', 'gameplay']);
   assert.deepEqual(assets.library_logo.logo_position, { pinned_position: 'BottomLeft', width_pct: '22', height_pct: '32' });
   assert.equal(posts.filter(s => s === '/save').length, 2, '已有截图没有重传');

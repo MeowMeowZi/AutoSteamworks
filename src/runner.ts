@@ -129,7 +129,7 @@ export async function runOperation(req: RunRequest, log: Log): Promise<RunResult
               if (req.dryRun) { log(`  → ${item.label}\n    ${item.preview}`, 'result'); continue; }
               log(`  正在核对并保存${item.label}…`);
               try {
-                const changed = await applyDraftSetting(page, c, app, item.value);
+                const changed = await applyDraftSetting(page, c, app, item.value, log);
                 result.changedRemote ||= changed;
                 const manifest = readManifest(c, app);
                 manifest[item.id] = { hash: item.hash, type: item.label, uploadedAt: new Date().toISOString() };

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Page } from 'playwright-core';
+import { errors, type Page } from 'playwright-core';
 import type { AppConfig, Config } from '../config.js';
 import { gotoPartner } from '../browser.js';
 import { logoMatches, matchingShots, type DraftValue } from '../local/draftSettings.js';
@@ -10,22 +10,54 @@ const languageIds = ['english', 'german', 'french', 'italian', 'koreana', 'spani
   'japanese', 'portuguese', 'polish', 'danish', 'dutch', 'finnish', 'norwegian', 'swedish', 'hungarian', 'czech', 'romanian',
   'turkish', 'brazilian', 'bulgarian', 'greek', 'arabic', 'ukrainian', 'latam', 'vietnamese', '', 'indonesian', 'malay'];
 
-async function survey(page: Page, url: string, descriptions: Record<string, string>) {
-  async function openDescription() {
-    await gotoPartner(page, url);
-    const tab = page.getByText(/^(生成式人工智能\s*[（(]AI[）)]|Generative (?:Artificial Intelligence|AI).*)$/i).first();
-    await tab.click({ timeout: 15000 }).catch(() => { throw new Error('无法打开内容调查的 AI 栏目，请在 Steamworks 确认调查草稿可以访问'); });
-    const heading = page.getByRole('heading', { name: /^(商店页面描述|Store Page Description)/i });
-    const block = heading.locator('xpath=ancestor::div[.//textarea and .//select][1]');
-    await block.locator('textarea').waitFor({ timeout: 8000 }).catch(() => { throw new Error('内容调查没有显示 AI 商店页面描述，请在 Steamworks 核对本栏已有回答'); });
-    return { language: block.locator('select'), text: block.locator('textarea') };
+/** 打开指定 App 的调查草稿并定位公开披露编辑框。导航和回读都不保存调查。 */
+export async function openSurveyDescription(page: Page, origin: string, appid: number, log?: (line: string) => void) {
+  const path = `/contentsurvey/edit/${appid}/`;
+  const url = origin + path;
+  // 侧栏按钮的可访问名称同时包含审核状态、题数和栏目名称。
+  const tab = page.getByRole('button', { name: /生成式人工智能|Generative (?:Artificial Intelligence|AI)\b/i });
+  const loadError = page.getByText(/我们无法加载此应用的内容调查|(?:unable to|could not|failed to) load.*content survey/i).first();
+  async function hasTab() {
+    try {
+      await tab.or(loadError).first().waitFor({ timeout: 12000 });
+    } catch (e) {
+      if (!(e instanceof errors.TimeoutError)) throw e;
+    }
+    return await tab.count() === 1 && await tab.isVisible();
   }
-  const edit = await openDescription();
+
+  await gotoPartner(page, url);
+  if (!(await hasTab())) {
+    // 直接打开调查有时会得到 HTTP 200 的错误页。从应用管理页按站内链接再进入一次。
+    log?.('  直接打开调查未找到 AI 栏目，正在从此 App 的管理页重新进入…');
+    await gotoPartner(page, `${origin}/apps/landing/${appid}`);
+    const wrongOrg = await page.getByText(/没有此应用的正确权限|does not have (?:the )?(?:correct|proper) permissions/i).first().isVisible();
+    const entry = page.locator(`a[href="${path}"]:visible, a[href="${url}"]:visible`).first();
+    if (await entry.isVisible()) await entry.click();
+    else await gotoPartner(page, url);
+    if (!(await hasTab())) {
+      const cause = await loadError.isVisible() ? 'Steamworks 未能加载此应用的内容调查' : '调查页未显示可打开的 AI 栏目';
+      throw new Error(cause + (wrongOrg ? '；应用管理页提示当前机构权限不符，请切换到拥有此 App 权限的 Steamworks 机构后重试' : '，请在此 App 的应用管理页核对调查草稿状态后重试'));
+    }
+  }
+  const current = new URL(page.url());
+  if (current.origin !== origin || current.pathname.replace(/\/$/, '') !== path.slice(0, -1)) throw new Error('内容调查未打开到所选 App');
+  await tab.click();
+  const heading = page.getByRole('heading', { name: /^(商店页面描述|Store Page Description)/i });
+  const block = heading.locator('xpath=ancestor::div[.//textarea and .//select][1]');
+  const text = block.locator('textarea');
+  await text.waitFor({ timeout: 8000 }).catch(() => { throw new Error('内容调查没有显示 AI 商店页面描述，请在 Steamworks 核对本栏已有回答'); });
+  return { language: block.locator('select'), text };
+}
+
+async function survey(page: Page, origin: string, appid: number, descriptions: Record<string, string>, log: (line: string) => void) {
+  const edit = await openSurveyDescription(page, origin, appid, log);
   let different = false;
   for (const [lang, text] of Object.entries(descriptions)) {
     await edit.language.selectOption(String(languageIds.indexOf(lang)));
     if (await edit.text.inputValue() === text) continue;
     different = true;
+    log(`  正在填写 ${lang} 的 AI 商店页面描述…`);
     await edit.text.fill(text);
     await edit.text.blur();
   }
@@ -33,9 +65,11 @@ async function survey(page: Page, url: string, descriptions: Record<string, stri
   // 只保存本栏目。下一页是分级发布页，不操作该页。
   const save = page.getByRole('button', { name: /^(保存并继续|保存更改|继续查看\s*发布分级|Save (?:Changes|and Continue)|Continue to .*Publish)/i });
   if (await save.count() !== 1 || !(await save.isEnabled())) throw new Error('AI 栏目暂时无法保存，请核对 Steamworks 显示的必填问题');
+  log('  正在提交 AI 描述到调查草稿…');
   await save.click();
   await edit.text.waitFor({ state: 'hidden' });
-  const check = await openDescription();
+  log('  正在重新打开调查草稿，逐项核对各语言的 AI 描述…');
+  const check = await openSurveyDescription(page, origin, appid, log);
   for (const [lang, text] of Object.entries(descriptions)) {
     await check.language.selectOption(String(languageIds.indexOf(lang)));
     if (await check.text.inputValue() !== text) throw new Error('重新打开内容调查后，' + lang + ' 披露文案未保存');
@@ -125,9 +159,9 @@ async function storeSetting(page: Page, c: Config, app: AppConfig, v: Extract<Dr
   return true;
 }
 
-export async function applyDraftSetting(page: Page, c: Config, app: AppConfig, value: DraftValue) {
+export async function applyDraftSetting(page: Page, c: Config, app: AppConfig, value: DraftValue, log: (line: string) => void) {
   const origin = new URL(storeEditUrl(c, app)).origin;
-  if (value.kind === 'survey') return survey(page, `${origin}/contentsurvey/edit/${app.appid}/`, value.descriptions);
+  if (value.kind === 'survey') return survey(page, origin, app.appid, value.descriptions, log);
   if (value.kind === 'icon') return clientIcon(page, `${origin}/apps/clientimages/${app.appid}`, app.appid, value);
   return storeSetting(page, c, app, value);
 }
